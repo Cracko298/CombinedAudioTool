@@ -11,6 +11,9 @@
 - Extract Header from `CombinedAudio.bin`.
 - Add padding to files automatically (Requires Original Extracted File).
 
+## Downlaod(s):
+- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.0.0/CATool.py).
+- Requires `Python 3.8+` and `Python STD` (Installed alongside Python).
 ## Usage:
 ```
 python CATool.py

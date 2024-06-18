@@ -22,3 +22,7 @@ python CATool.py
        --ne,  name-extract   [CombinedAudioPATH]      [Sound Name/ID]       > Extracts a FSB Soundbank File from the CombinedAudio.bin Archive via Name/SoundID.
        --h,   help                                                          > Displays this Message.
 ```
+### Help Message:
+```
+python CATool.py --h
+```

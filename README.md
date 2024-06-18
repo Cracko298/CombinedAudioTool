@@ -10,6 +10,8 @@
 - Rebuild `CombinedAudio.bin` with new Custom Audio Files.
 - Extract Header from `CombinedAudio.bin`.
 - Add padding to files automatically (Requires Original Extracted File).
+- Collect all Sound Names/ID's.
+- Rename all Segments to Original Filenames.
 
 ## Downlaod(s):
 - Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.1.0/CATool.py).

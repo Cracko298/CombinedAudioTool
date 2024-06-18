@@ -1,5 +1,6 @@
 # CombinedAudioTool
 - A Tool for CombinedAudio.bin for Minecraft for New Nintendo 3DS Edition (MC3DS) with a plethora of Features.
+- Only support Windows Platforms Officially, due to being built and made using some Windows API functions.
 
 ## Feature Set:
 - Extract All FSB Soundbank Files in the Archive.

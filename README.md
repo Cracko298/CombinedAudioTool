@@ -12,9 +12,10 @@
 - Add padding to files automatically (Requires Original Extracted File).
 - Collect all Sound Names/ID's.
 - Rename all Segments to Original Filenames.
+- Grab Segment File Sizes individually, or altogether.
 
 ## Downlaod(s):
-- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.1.0/CATool.py).
+- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.2.0/CATool.py).
 - Requires `Python 3.8+` and `Python STD` (Installed alongside Python).
 ## Usage:
 ```

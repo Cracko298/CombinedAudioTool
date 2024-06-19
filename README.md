@@ -28,8 +28,8 @@ python CATool.py
        --ne,   name-extract   [CombinedAudioPATH]      [Sound Name/ID]       > Extracts a FSB Soundbank File from the CombinedAudio.bin Archive via Name/SoundID.
        --ra,   rename-all     [SegmentFolderPATH]                            > Renames all Segment Files back to their original FSB Soundbank Filename(s).
        --gsid, get-soundid    [CombinedAudioPATH]                            > Gets all Sound Names/ID's and Dumps them to a *.txt File.
-       --gssg, get-size-seg   [SegmentOutFolderPATH]                         > Gets the size of all Segment Soundbank FSB Files.
-       --gs,   get-size       [SegmentFilePATH]                              > Gets the size of a specific Segment Soundbank FSB File.
+       --gssg, get-size-seg   [SegmentFilePATH]                              > Gets the size of a specific Segment Soundbank FSB File.
+       --gs,   get-size       [SegmentOutFolderPATH]                         > Gets the size of all Segment Soundbank FSB Files.
        --h,    help                                                          > Displays this Message.
 ```
 ### Help Message:

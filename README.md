@@ -16,7 +16,7 @@
 - Update your Script as new features become avaliable.
 
 ## Downlaod(s):
-- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.2.0/CATool.py).
+- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.3/CATool.py).
 - Requires `Python 3.8+` and `Python STD` (Installed alongside Python).
 ## Usage:
 ```

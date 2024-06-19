@@ -13,7 +13,7 @@
 - Collect all Sound Names/ID's.
 - Rename all Segments to Original Filenames.
 - Grab Segment File Sizes individually, or altogether.
-- Update your Script as new features become avaliable.
+- Updating your Script as new features become avaliable.
 
 ## Downlaod(s):
 - Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.3/CATool.py).

@@ -14,9 +14,10 @@
 - Rename all Segments to Original Filenames.
 - Grab Segment File Sizes individually, or altogether.
 - Updating your Script as new features become avaliable.
+- Extract Audio from FSB Files.
 
 ## Downlaod(s):
-- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.3/CATool.py).
+- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.4/CATool.zip).
 - Requires `Python 3.8+` and `Python STD` (Installed alongside Python).
 
 ## Usage:
@@ -33,6 +34,7 @@ python CATool.py
        --gsid, get-soundid    [CombinedAudioPATH]                            > Gets all Sound Names/ID's and Dumps them to a *.txt File.
        --gssg, get-size-seg   [SegmentFilePATH]                              > Gets the size of a specific Segment Soundbank FSB File.
        --gs,   get-size       [SegmentOutFolderPATH]                         > Gets the size of all Segment Soundbank FSB Files.
+       --exa,  extract-seg    [SegmentFilePATH]                              > Attempts to extract Audio from Segment Soundbank FSB Files.
        --upd,  update                                                        > Updates From Current Version to the Latest Version of 'CATool.py'.
        --h,    help                                                          > Displays this Message.
 ```

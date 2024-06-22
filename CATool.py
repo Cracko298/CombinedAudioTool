@@ -1,6 +1,12 @@
-import os, sys, re, urllib.request, time, requests, zipfile, io
+import os, sys, re, urllib.request, time, zipfile, io
 from extrcd import fsb5
-VERSION = 1.4
+VERSION = 1.5
+
+try:
+    import requests
+except ImportError:
+    os.system('pip install requests')
+    print("\n\nInstalled 'requests' Module.\nPlease Retry your Command.")
 
 def extrCombAudio():
     def find_segments(file_path):
@@ -324,21 +330,31 @@ def self_update():
     sys.exit()
 
 def extractAudio():
-    segment_fsb = sys.argv[2]
-    with open(segment_fsb,'rb') as f:
-        fsb = fsb5.FSB5(f.read())
+    try:
+        segment_fsb = sys.argv[2]
+        with open(segment_fsb,'rb') as f:
+            fsb = fsb5.FSB5(f.read())
 
-    print(fsb.header)
-    ext = fsb.get_sample_extension()
-    for sample in fsb.samples:
-        print('''\t{sample.name}.{extension}:
-        Frequency: {sample.frequency}
-        Channels: {sample.channels}
-        Samples: {sample.samples}'''.format(sample=sample, extension=ext))
+        ext = fsb.get_sample_extension()
+        for sample in fsb.samples:
+            print('''\t
+            Name: {sample.name}.fsb
+            Frequency: {sample.frequency}
+            Channels: {sample.channels}
+            Samples: {sample.samples}\n'''.format(sample=sample, extension=ext))
 
-    with open('{0}.{1}'.format(sample.name, ext), 'wb') as f:
-        rebuilt_sample = fsb.rebuild_sample(sample)
-        f.write(rebuilt_sample)
+        with open('{0}.{1}'.format(sample.name, ext), 'wb') as f:
+            rebuilt_sample = fsb.rebuild_sample(sample)
+            f.write(rebuilt_sample)
+    except NotImplementedError:
+        print("Nintendo GCADPCM Found.\nAttempting New Decoding Algorithm...\n")
+        gcadpcmAudio()
+
+def gcadpcmAudio():
+    audio_file = sys.argv[2]
+    fileN_0 = os.path.basename(audio_file)
+    fileF_0 = fileN_0.replace('.fsb','')
+    os.system(f'.\\extrcd\\gcadpcm\\cvt.exe -o .\\{fileF_0}.wav {audio_file}')
 
 if __name__ == '__main__':
     try:

@@ -14,10 +14,10 @@
 - Rename all Segments to Original Filenames.
 - Grab Segment File Sizes individually, or altogether.
 - Updating your Script as new features become avaliable.
-- Extract Audio from FSB Files.
+- Extract Audio from FSB Files (now including GCADPCM FSB Soundbank Files).
 
 ## Downlaod(s):
-- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.4/CATool.zip).
+- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.5/CATool.zip).
 - Requires `Python 3.8+` and `Python STD` (Installed alongside Python).
 
 ## Usage:

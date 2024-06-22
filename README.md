@@ -36,6 +36,7 @@ python CATool.py
        --gs,   get-size       [SegmentOutFolderPATH]                         > Gets the size of all Segment Soundbank FSB Files.
        --exa,  extract-seg    [SegmentFilePATH]                              > Attempts to extract Audio from Segment Soundbank FSB Files.
        --upd,  update                                                        > Updates From Current Version to the Latest Version of 'CATool.py'.
+       --rstr, restore                                                       > Basically an Emergancy Version of '--upd' that Wipes all Files from CATool and Reinstalls them.
        --h,    help                                                          > Displays this Message.
 ```
 ### Help Message:

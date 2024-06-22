@@ -1,12 +1,46 @@
 import os, sys, re, urllib.request, time, zipfile, io
-from extrcd import fsb5
-VERSION = 1.5
+VERSION = 1.6
 
 try:
     import requests
 except ImportError:
     os.system('pip install requests')
     print("\n\nInstalled 'requests' Module.\nPlease Retry your Command.")
+
+def restoreToolInt():
+    file_name = 'CATool'
+    release_url = f"https://api.github.com/repos/Minecraft-3DS-Community/CombinedAudioTool/releases/latest"
+    response = requests.get(release_url)
+    release_info = response.json()
+    print("\nGetting Latest CATool Version...")
+    asset_url = None
+    for asset in release_info['assets']:
+        if asset['name'] == f"{file_name}.py" or asset['name'] == f"{file_name}.zip":
+            asset_url = asset['browser_download_url']
+            print(f"Most Recent Version: {asset_url}")
+            break
+    else:
+        raise ValueError(f"No asset named '{file_name}' or .zip file found in the latest release.")
+
+    response = requests.get(asset_url)
+    if asset['name'] == f"{file_name}.zip":
+        print("Downloading and extracting the latest CATool.zip...")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            z.extractall('.')
+        print("Extracted the contents of the latest CATool.zip")
+    else:
+        print("Downloading CATool...")
+        with open(file_name, 'wb') as f:
+            f.write(response.content)
+        print("Downloaded the latest CATool")
+
+try:
+    from extrcd import fsb5
+except ImportError:
+    print(f"The Tool experienced an Unhandeled Exception.\nTool Directory: '.\\extrcd' has not been Found.")
+    restore = sys.argv[1]
+    if restore == 'restore' or restore == '--rstr':
+        restoreToolInt()
 
 def extrCombAudio():
     def find_segments(file_path):
@@ -174,6 +208,7 @@ def info_help():
        --gs,   get-size       [SegmentOutFolderPATH]                         > Gets the size of all Segment Soundbank FSB Files.
        --exa,  extract-seg    [SegmentFilePATH]                              > Attempts to extract Audio from Segment Soundbank FSB Files.
        --upd,  update                                                        > Updates From Current Version to the Latest Version of 'CATool.py'.
+       --rstr, restore                                                       > Basically an Emergancy Version of '--upd' that Wipes all Files from CATool and Reinstalls them.
        --h,    help                                                          > Displays this Message.\n\n\n""")
     os.system('pause')
 
@@ -316,10 +351,10 @@ def get_latest_CATool():
             z.extractall('.')
         print("Extracted the contents of the latest CATool.zip")
     else:
-        print("Downloading CATool.py...")
+        print("Downloading CATool...")
         with open(file_name, 'wb') as f:
             f.write(response.content)
-        print("Downloaded the latest CATool.py")
+        print("Downloaded the latest CATool.")
 
 def self_update():
     print("Updating CATool.py...\n")
@@ -400,5 +435,12 @@ if __name__ == '__main__':
 
         if callable == 'update' or callable == '--upd':
             self_update()
+
+        if callable == 'restore' or callable == '--rstr':
+            if os.path.exists('.\\extrcd') != True:
+                restoreToolInt()
+            else:
+                pass
+
     except IndexError:
         info_help()

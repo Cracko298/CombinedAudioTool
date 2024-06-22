@@ -15,9 +15,10 @@
 - Grab Segment File Sizes individually, or altogether.
 - Updating your Script as new features become avaliable.
 - Extract Audio from FSB Files (now including GCADPCM FSB Soundbank Files).
+- Restore CATool File Integrity.
 
 ## Downlaod(s):
-- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.5/CATool.zip).
+- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.6/CATool.zip).
 - Requires `Python 3.8+` and `Python STD` (Installed alongside Python).
 
 ## Usage:

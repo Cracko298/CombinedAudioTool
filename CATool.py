@@ -1,5 +1,5 @@
-import os, sys, re, urllib.request, time, zipfile, io
-VERSION = 1.6
+import os, sys, re, urllib.request, time, zipfile, io, winsound
+VERSION = 1.7
 
 try:
     import requests
@@ -207,6 +207,8 @@ def info_help():
        --gssg, get-size-seg   [SegmentFilePATH]                              > Gets the size of a specific Segment Soundbank FSB File.
        --gs,   get-size       [SegmentOutFolderPATH]                         > Gets the size of all Segment Soundbank FSB Files.
        --exa,  extract-seg    [SegmentFilePATH]                              > Attempts to extract Audio from Segment Soundbank FSB Files.
+       --cwav, convert-wave   [SegmentFilePATH]        [FileToConvertPATH]   > Convert Custom Audio to Nintendo 'GCADPCM'/'DSADPCM' Format.
+       --pa,   play-audio     [WaveFilePATH]                                 > Play Audio from a Wave-File.
        --upd,  update                                                        > Updates From Current Version to the Latest Version of 'CATool.py'.
        --rstr, restore                                                       > Basically an Emergancy Version of '--upd' that Wipes all Files from CATool and Reinstalls them.
        --h,    help                                                          > Displays this Message.\n\n\n""")
@@ -364,32 +366,59 @@ def self_update():
     time.sleep(0.5)
     sys.exit()
 
+def errorHandle():
+    print("Nintendo GCADPCM Found.\nAttempting New Decoding Algorithm...\n")
+    gcadpcmAudio()
+
 def extractAudio():
     try:
-        segment_fsb = sys.argv[2]
-        with open(segment_fsb,'rb') as f:
-            fsb = fsb5.FSB5(f.read())
+        try:
+            segment_fsb = sys.argv[2]
+            with open(segment_fsb,'rb') as f:
+                fsb = fsb5.FSB5(f.read())
+    
+            ext = fsb.get_sample_extension()
+            for sample in fsb.samples:
+                print('''\t
+                Name: {sample.name}.fsb
+                Frequency: {sample.frequency}
+                Channels: {sample.channels}
+                Samples: {sample.samples}\n'''.format(sample=sample, extension=ext))
 
-        ext = fsb.get_sample_extension()
-        for sample in fsb.samples:
-            print('''\t
-            Name: {sample.name}.fsb
-            Frequency: {sample.frequency}
-            Channels: {sample.channels}
-            Samples: {sample.samples}\n'''.format(sample=sample, extension=ext))
-
-        with open('{0}.{1}'.format(sample.name, ext), 'wb') as f:
-            rebuilt_sample = fsb.rebuild_sample(sample)
-            f.write(rebuilt_sample)
+            with open('{0}.{1}'.format(sample.name, ext), 'wb') as f:
+                rebuilt_sample = fsb.rebuild_sample(sample)
+                f.write(rebuilt_sample)
+        except ValueError:
+            errorHandle()        
     except NotImplementedError:
-        print("Nintendo GCADPCM Found.\nAttempting New Decoding Algorithm...\n")
-        gcadpcmAudio()
+        errorHandle()
 
 def gcadpcmAudio():
     audio_file = sys.argv[2]
     fileN_0 = os.path.basename(audio_file)
-    fileF_0 = fileN_0.replace('.fsb','')
-    os.system(f'.\\extrcd\\gcadpcm\\cvt.exe -o .\\{fileF_0}.wav {audio_file}')
+    fileF_0 = os.path.splitext(fileN_0)[0]
+    segmentName = find_segment_name()
+    if segmentName == None:
+        segmentName = 0
+    os.system(f'.\\extrcd\\gcadpcm\\cvt.exe -o .\\{fileF_0}_{segmentName}.wav {audio_file}')
+
+def convertAudioGcadpcm():
+    originalFile = sys.argv[2] # Required because it's used in find_segment_name()
+    file2Convert = sys.argv[3]
+    originalFileName = find_segment_name()
+    if '.wav' not in file2Convert and '.wave' not in file2Convert:
+        print(f"File Provided: '{file2Convert}' is an Invalid Wave File.\nPlease try again with a Valid Wave/RIFF File Format.\n")
+        sys.exit(1)
+    
+    os.system(f'.\\extrcd\\gcadpcm\\encode_soundCli.exe --convert -f GcAdpcm -i "{file2Convert}" -o "{originalFileName}.dsp"')
+
+def playAudio():
+    wavFile = sys.argv[2]
+    if '.wav' in wavFile or '.wave' in wavFile:
+        winsound.PlaySound(wavFile, winsound.SND_FILENAME)
+    else:
+        print("Invalid Wave File Found.")
+        sys.exit(1)
 
 if __name__ == '__main__':
     try:
@@ -441,6 +470,12 @@ if __name__ == '__main__':
                 restoreToolInt()
             else:
                 pass
+
+        if callable == 'convert-wave' or callable == '--cwav':
+            convertAudioGcadpcm()
+
+        if callable == 'play-audio' or callable == '--pa':
+            playAudio()
 
     except IndexError:
         info_help()

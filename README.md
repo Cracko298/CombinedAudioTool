@@ -15,6 +15,7 @@
 - Grab Segment File Sizes individually, or altogether.
 - Updating your Script as new features become avaliable.
 - Extract Audio from FSB Files (now including GCADPCM FSB Soundbank Files).
+- Convert `*.wav` back into GCADPCM/DSADPCM.
 - Restore CATool File Integrity.
 
 ## Downlaod(s):

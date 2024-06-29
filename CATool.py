@@ -1,18 +1,19 @@
 import os, sys, re, urllib.request, time, zipfile, io, winsound
-VERSION = 1.7
+VERSION = 1.8
 
 try:
     import requests
 except ImportError:
     os.system('pip install requests')
     print("\n\nInstalled 'requests' Module.\nPlease Retry your Command.")
+    sys.exit(1)
 
 def restoreToolInt():
     file_name = 'CATool'
-    release_url = f"https://api.github.com/repos/Minecraft-3DS-Community/CombinedAudioTool/releases/latest"
+    release_url = f"https://api.github.com/repos/Minecraft-3DS-Community/CombinedAudioTool/releases/tag/v{VERSION}"
     response = requests.get(release_url)
     release_info = response.json()
-    print("\nGetting Latest CATool Version...")
+    print(f"\nGetting Your Version (v{VERSION}) of CATool...")
     asset_url = None
     for asset in release_info['assets']:
         if asset['name'] == f"{file_name}.py" or asset['name'] == f"{file_name}.zip":
@@ -41,6 +42,7 @@ except ImportError:
     restore = sys.argv[1]
     if restore == 'restore' or restore == '--rstr':
         restoreToolInt()
+    print(f"Use the Restore Flag to Restore the File ")
 
 def extrCombAudio():
     def find_segments(file_path):
@@ -420,6 +422,12 @@ def playAudio():
         print("Invalid Wave File Found.")
         sys.exit(1)
 
+def generateMusic():
+    wavFile = sys.argv[2]
+    outputDir = os.path.dirname(__file__)
+    wavFileNE = wavFile.replace('.wav','')
+    os.system(f'.\\extrcd\\gen\\other\\fsbCli.exe -build_mode i -format pcm -rebuild -optimize_samplerate -o {wavFileNE}.fsb {wavFile}')
+
 if __name__ == '__main__':
     try:
         callable = sys.argv[1]
@@ -476,6 +484,9 @@ if __name__ == '__main__':
 
         if callable == 'play-audio' or callable == '--pa':
             playAudio()
+        
+        if callable == 'generate-music' or callable == '--gmsc':
+            generateMusic()
 
     except IndexError:
         info_help()

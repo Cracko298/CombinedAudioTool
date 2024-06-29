@@ -17,6 +17,7 @@
 - Extract Audio from FSB Files (now including GCADPCM FSB Soundbank Files).
 - Convert `*.wav` back into GCADPCM/DSADPCM.
 - Restore CATool File Integrity.
+- Encode Minecraft 3DS Music Files.
 
 ## Downlaod(s):
 - Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.7/CATool.zip).

@@ -20,7 +20,7 @@
 - Encode Minecraft 3DS Music Files.
 
 ## Downlaod(s):
-- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.7/CATool.zip).
+- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.8/CATool.zip).
 - Requires `Python 3.8+` and `Python STD` (Installed alongside Python).
 
 ## Usage:

@@ -18,6 +18,8 @@
 - Convert `*.wav` back into GCADPCM/DSADPCM.
 - Restore CATool File Integrity.
 - Encode Minecraft 3DS Music Files from Wave Files.
+- Convert any Audio Filetype to Wave.
+- Install FFMPEG via Command Line.
 
 ## Download(s):
 - Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.8/CATool.zip).

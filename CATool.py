@@ -1,5 +1,6 @@
-import os, sys, re, urllib.request, time, zipfile, io, winsound
-VERSION = 1.8
+import os, sys, re, urllib.request, time, zipfile, io, winsound, shutil
+from tkinter import messagebox
+VERSION = 1.9
 
 try:
     import requests
@@ -194,8 +195,29 @@ def addPadding():
         for i in range(difference):
             of.write(b'\x00')
 
+def formatsToWave():
+    if os.path.exists(f"{os.path.dirname(__file__)}\\extrcd\\mpg\\bin") != True:
+        print("\n\nFFMPEG Has NOT been installed.\nPlease install with: '--impg' Flag.\n")
+        sys.exit(1)
+    fileToConvert = sys.argv[2]
+    if '.ogg' in fileToConvert:
+        newFile = fileToConvert.replace('.ogg','.wav')
+        newFile = os.path.basename(newFile)
+        os.system(f'.\\extrcd\\mpg\\bin\\ffmpeg.exe -y -loglevel quiet -i {fileToConvert} {os.path.dirname(__file__)}\\{newFile}')
+    if '.mp3' in fileToConvert:
+        newFile = fileToConvert.replace('.mp3','.wav')
+        newFile = os.path.basename(newFile)
+        os.system(f'.\\extrcd\\mpg\\bin\\ffmpeg.exe -y -loglevel quiet -i {fileToConvert} {os.path.dirname(__file__)}\\{newFile}')
+    if '.flv' in fileToConvert:
+        newFile = fileToConvert.replace('.flv','.wav')
+        newFile = os.path.basename(newFile)
+        os.system(f'.\\extrcd\\mpg\\bin\\ffmpeg.exe -y -loglevel quiet -i {fileToConvert} {os.path.dirname(__file__)}\\{newFile}')
+
+    print("\n\nConversion Completed.\n")
+
+
 def info_help():
-    print("""\n
+    print(f"""\n
     python CATool.py
        --eca,  extract-ca     [CombinedAudioPATH]                            > Extracts All FSB Soundbank Files from the CombinedAudio.bin Archive.
        --fn,   find-sn        [SegmentFilePATH]                              > Find the Segment Name from an Extracted FSB Soundbank File via --eca Flag.
@@ -212,6 +234,8 @@ def info_help():
        --cwav, convert-wave   [SegmentFilePATH]        [FileToConvertPATH]   > Convert Custom Audio to Nintendo 'GCADPCM'/'DSADPCM' Format.
        --pa,   play-audio     [WaveFilePATH]                                 > Play Audio from a Wave-File.
        --gsmc, generate-music [WaveFilePATH]                                 > Generates a Valid Music FSB Soundbank File for Minecraft 3DS Edition from a Wave File.
+       --atw,  to-wave        [AudioFileToConvertToWavPATH]                  > Convert basically any Audio format like *.ogg or *.mp3 to Wave Format.
+       --impg, inst-ffmpeg                                                   > Install FFMPEG to '{os.path.dirname(__file__)}\\extrcd\\mpg\\bin'.
        --upd,  update                                                        > Updates From Current Version to the Latest Version of 'CATool.py'.
        --rstr, restore                                                       > Basically an Emergancy Version of '--upd' that Wipes all Files from CATool and Reinstalls them.
        --h,    help                                                          > Displays this Message.\n\n\n""")
@@ -425,9 +449,55 @@ def playAudio():
 
 def generateMusic():
     wavFile = sys.argv[2]
-    outputDir = os.path.dirname(__file__)
     wavFileNE = wavFile.replace('.wav','')
     os.system(f'.\\extrcd\\gen\\other\\fsbCli.exe -build_mode i -format pcm -rebuild -optimize_samplerate -o {wavFileNE}.fsb {wavFile}')
+
+def download_ffmpeg(url, filename):
+    response = requests.get(url, stream=True)
+    response.raise_for_status()
+    with open(filename, 'wb') as file:
+        for chunk in response.iter_content(chunk_size=8192):
+            file.write(chunk)
+
+def extract_bin_folder(zip_path, extract_to):
+    zip0 = os.path.basename(zip_path)
+    zip_folder = zip0.replace(".zip","")
+    if os.path.exists(f"{os.path.dirname(__file__)}\\extrcd\\mpg\\bin"):
+        print("\n\nFFMPEG Has been installed already.")
+        sys.exit(1)
+
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        for member in zip_ref.namelist():
+            if member.startswith(f'{zip_folder}/bin'):
+                zip_ref.extract(member, extract_to)
+    
+    shutil.copytree(f"{os.path.dirname(__file__)}\\extrcd\\mpg\\{zip_folder}\\bin",f"{os.path.dirname(__file__)}\\extrcd\\mpg\\bin")
+    shutil.rmtree(f"{os.path.dirname(__file__)}\\extrcd\\mpg\\{zip_folder}")
+    
+def install_ffmpeg():
+    release_url = f"https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest"
+    msgbx = messagebox.askyesno("Install FFMPEG", "Would you like to install FFMPEG for CATool?")
+    if not msgbx:
+        sys.exit(1)
+    
+    response = requests.get(release_url)
+    response.raise_for_status()
+    release_data = response.json()
+    for asset in release_data['assets']:
+        if 'win64-gpl-shared' in asset['name']:
+            download_url = asset['browser_download_url']
+            file_name = asset['name']
+            print(f"Downloading {file_name} from {download_url}")
+            download_ffmpeg(download_url, file_name)
+            print(f"Downloaded {file_name}")
+            extract_dir = './extrcd/mpg'
+            if not os.path.exists(extract_dir):
+                os.makedirs(extract_dir)
+
+            extract_bin_folder(file_name, extract_dir)
+            break
+    else:
+        print("No asset found with the text 'win64-gpl-shared'")
 
 if __name__ == '__main__':
     try:
@@ -488,6 +558,12 @@ if __name__ == '__main__':
         
         if callable == 'generate-music' or callable == '--gmsc':
             generateMusic()
+
+        if callable == 'to-wave' or callable == '--atw':
+            formatsToWave()
+
+        if callable == '--impg' or callable == 'inst-ffmpeg':
+            install_ffmpeg()
 
     except IndexError:
         info_help()

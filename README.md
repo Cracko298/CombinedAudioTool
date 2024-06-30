@@ -22,7 +22,7 @@
 - Install FFMPEG via Command Line.
 
 ## Download(s):
-- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.8/CATool.zip).
+- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.9/CATool.zip).
 - Requires `Python 3.8+` and `Python STD` (Installed alongside Python).
 
 ## Usage:

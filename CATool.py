@@ -1,6 +1,6 @@
 import os, sys, re, urllib.request, time, zipfile, io, winsound, shutil
 from tkinter import messagebox
-VERSION = 1.9
+VERSION = 2.0
 
 try:
     import requests
@@ -185,15 +185,24 @@ def addPadding():
         originalData = f.read()
         ogDataLen = len(originalData)
 
-    with open(modifiedFile,'rb') as mf:
-        modifiedData = mf.read()
-        modDataLen = len(modifiedData)
-        mf.close()
+        with open(modifiedFile,'rb') as mf:
+            modifiedData = mf.read()
+            modDataLen = len(modifiedData)
+            mf.close()
 
-    difference = ogDataLen-modDataLen
-    with open(modifiedFile,'ab') as of:
-        for i in range(difference):
-            of.write(b'\x00')
+        difference = ogDataLen-modDataLen
+        with open(modifiedFile,'ab') as of:
+            for i in range(difference):
+                of.write(b'\x00')
+        
+        with open(modifiedFile,'rb+') as newestF:
+            newestF.seek(0x14)
+            sampleSize = newestF.read(0x04)
+            sampleNumber = int.from_bytes(sampleSize,byteorder='little')
+            newSize = sampleNumber+difference
+            newestF.seek(0x14)
+            newSize = newSize.to_bytes(4, byteorder='little')
+            newestF.write(newSize)
 
 def formatsToWave():
     if os.path.exists(f"{os.path.dirname(__file__)}\\extrcd\\mpg\\bin") != True:
@@ -233,9 +242,12 @@ def info_help():
        --exa,  extract-seg    [SegmentFilePATH]                              > Attempts to extract Audio from Segment Soundbank FSB Files.
        --cwav, convert-wave   [SegmentFilePATH]        [FileToConvertPATH]   > Convert Custom Audio to Nintendo 'GCADPCM'/'DSADPCM' Format.
        --pa,   play-audio     [WaveFilePATH]                                 > Play Audio from a Wave-File.
-       --gsmc, generate-music [WaveFilePATH]                                 > Generates a Valid Music FSB Soundbank File for Minecraft 3DS Edition from a Wave File.
+       --gmsc, generate-music [WaveFilePATH]                                 > Generates a Valid Music FSB Soundbank File for Minecraft 3DS Edition from a Wave File.
        --atw,  to-wave        [AudioFileToConvertToWavPATH]                  > Convert basically any Audio format like *.ogg or *.mp3 to Wave Format.
        --impg, inst-ffmpeg                                                   > Install FFMPEG to '{os.path.dirname(__file__)}\\extrcd\\mpg\\bin'.
+       --efrw, ext-fsb-raw    [SegmentFilePATH]                              > Extracts the raw GCADPCM/DSPADPCM Audio from an *.fsb Soundbank File.
+       --edrw, ext-dsp-raw    [GeneratedDspFilePATH]                         > Extracts the raw GCADPCM/DSPADPCM Audio from a Nintendo *.dsp Audio File.
+       --rsnd, replace-snd    [SegmentFilePATH]        [DspFilePATH]         > Convert Nintendo *.dsp Audio File to *.fsb Soundbank File.
        --upd,  update                                                        > Updates From Current Version to the Latest Version of 'CATool.py'.
        --rstr, restore                                                       > Basically an Emergancy Version of '--upd' that Wipes all Files from CATool and Reinstalls them.
        --h,    help                                                          > Displays this Message.\n\n\n""")
@@ -499,6 +511,81 @@ def install_ffmpeg():
     else:
         print("No asset found with the text 'win64-gpl-shared'")
 
+def replaceFSBAudio():
+    originalFile = sys.argv[2]
+    generateDspFile = sys.argv[3]
+    newFile = originalFile.replace('.fsb','_New.fsb')
+    dspHeaderSize = 0x60 # Always
+    with open(originalFile,'rb') as origF:
+        ogLen, ogFileSize = getRawAudioSizeAndData()
+        read_data = ogFileSize-ogLen
+        ogFileData = origF.read(read_data)
+        ogFileLen = ogLen
+        with open(generateDspFile,'rb') as dspF:
+            dspF.seek(dspHeaderSize)
+            dsp_data = dspF.read()
+            dspFileLen = len(dsp_data)
+            print(f"DSP File Length: {dspFileLen}\nFSB File Length: {ogFileLen}")
+    
+        if ogFileLen < dspFileLen:
+            print(f"\n\nCannot Convert File to Provided *.FSB Soundbank File.\nError Due to Size Limitation.\n")
+            sys.exit(1)
+
+        dataDifference = ogFileLen-dspFileLen # MUST BE SMALLER
+        with open(newFile,'wb') as f:
+            f.write(ogFileData)
+            origF.seek(0x14)
+            sizeBytes = origF.read(0x04)
+            oldValue = int.from_bytes(sizeBytes, byteorder='little')
+            newValue = dspFileLen
+            newValBytes = newValue.to_bytes(4, byteorder='little')
+            f.seek(0x14)
+            f.write(newValBytes)
+            f.seek(0, 2)
+            f.write(dsp_data)
+
+def extractRawAudioFromDSP():
+    dspFile = sys.argv[2]
+    rawDspFile = dspFile.replace('.dsp','.rawdsp')
+    with open(dspFile,'rb') as ogF:
+        ogF.seek(0x60)
+        data = ogF.read()
+    
+    with open(rawDspFile,'wb') as f:
+        f.write(data)
+
+def extractRawAudioFromFSB():
+    fsbFile = sys.argv[2]
+    rawFsbFile = fsbFile.replace('.fsb','.rawfsb')
+    with open(fsbFile,'rb') as f:
+        f.seek(0x14)
+        data = f.read(4)
+        value = int.from_bytes(data, byteorder='little')
+        f.seek(0, 2)
+        file_size = f.tell()
+        seek_position = file_size - value
+        f.seek(seek_position)
+        gcadpcm_audio = f.read()
+        f.close()
+    with open(rawFsbFile,'wb') as of:
+        of.write(gcadpcm_audio)
+        of.close()
+
+def getRawAudioSizeAndData():
+    file0 = sys.argv[2]
+    with open(file0,'rb') as f:
+        f.seek(0x14)
+        data = f.read(4)
+        value = int.from_bytes(data, byteorder='little')
+        f.seek(0, 2)
+        file_size = f.tell()
+        seek_position = file_size - value
+        f.seek(seek_position)
+        gcadpcm_audio = f.read()
+        gcadpcm_len = len(gcadpcm_audio)
+        f.close()
+        return gcadpcm_len, file_size
+
 if __name__ == '__main__':
     try:
         callable = sys.argv[1]
@@ -564,6 +651,15 @@ if __name__ == '__main__':
 
         if callable == '--impg' or callable == 'inst-ffmpeg':
             install_ffmpeg()
+
+        if callable == 'ext-fsb-raw' or callable == '--efrw':
+            extractRawAudioFromFSB()
+
+        if callable == 'ext-dsp-raw' or callable == '--edrw':
+            extractRawAudioFromDSP()
+
+        if callable == 'replace-snd' or callable == '--rsnd':
+            replaceFSBAudio()
 
     except IndexError:
         info_help()

@@ -43,7 +43,7 @@ python CATool.py
        --exa,  extract-seg    [SegmentFilePATH]                              > Attempts to extract Audio from Segment Soundbank FSB Files.
        --cwav, convert-wave   [SegmentFilePATH]        [FileToConvertPATH]   > Convert Custom Audio to Nintendo 'GCADPCM'/'DSADPCM' Format (*.dsp).
        --pa,   play-audio     [WaveFilePATH]                                 > Play Audio from a Wave-File.
-       --gsmc, generate-music [WaveFilePATH]                                 > Generates a Valid Music FSB Soundbank File for Minecraft 3DS Edition from a Wave File.
+       --gmsc, generate-music [WaveFilePATH]                                 > Generates a Valid Music FSB Soundbank File for Minecraft 3DS Edition from a Wave File.
        --atw,  to-wave        [AudioFileToConvertToWavPATH]                  > Convert basically any Audio format like *.ogg or *.mp3 to Wave Format.
        --impg, inst-ffmpeg                                                   > Install FFMPEG to '.\extrcd\mpg\bin'.
        --efrw, ext-fsb-raw    [SegmentFilePATH]                              > Extracts the raw GCADPCM/DSPADPCM Audio from an *.fsb Soundbank File.

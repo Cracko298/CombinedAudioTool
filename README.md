@@ -20,9 +20,10 @@
 - Encode Minecraft 3DS Music Files from Wave Files.
 - Convert any Audio Filetype to Wave.
 - Install FFMPEG via Command Line.
+- Add your own Custom Audio/Ambience/SFX to Minecraft 3DS.
 
 ## Download(s):
-- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v1.9/CATool.zip).
+- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v2.0/CATool.zip).
 - Requires `Python 3.8+` and `Python STD` (Installed alongside Python).
 
 ## Usage:

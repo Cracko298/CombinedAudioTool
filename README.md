@@ -18,7 +18,7 @@
 - Convert `*.wav` back into GCADPCM/DSADPCM.
 - Restore CATool File Integrity.
 - Encode Minecraft 3DS Music Files from Wave Files.
-- Convert any Audio Filetype to Wave.
+- Convert any Audio Filetype to Wave (requires FFMPEG)
 - Install FFMPEG via Command Line.
 - Add your own Custom Audio/Ambience/SFX to Minecraft 3DS.
 

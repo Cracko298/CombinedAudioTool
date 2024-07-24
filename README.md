@@ -204,7 +204,7 @@ elder_hit1
 elder_idle3
 flop1
 guardian_death
-guardian_hit1
+
 land_death
 land_hit1
 land_idle1
@@ -333,7 +333,7 @@ step3
 hurt1
 hurt2
 hurt3
-hurt4
+idle1
 idle2
 idle3
 hop1
@@ -347,6 +347,7 @@ shear
 step1
 step2
 step3
+
 hit2
 hit3
 kill
@@ -458,7 +459,7 @@ throw3
 idle1
 woodbreak
 death
-death1
+hurt1
 shoot
 spawn
 bark1

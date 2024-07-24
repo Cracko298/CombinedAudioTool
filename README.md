@@ -21,9 +21,10 @@
 - Convert any Audio Filetype to Wave (requires FFMPEG).
 - Install FFMPEG via Command Line.
 - Add your own Custom Audio/Ambience/SFX to Minecraft 3DS.
+- Get MetaData from `CombinedAudio.bin` Archive.
 
 ## Download(s):
-- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v2.0/CATool.zip).
+- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v2.1/CATool.zip).
 - Requires `Python 3.8+` and `Python STD` (Installed alongside Python).
 
 ## Usage:
@@ -49,6 +50,7 @@ python CATool.py
        --efrw, ext-fsb-raw    [SegmentFilePATH]                              > Extracts the raw GCADPCM/DSPADPCM Audio from an *.fsb Soundbank File.
        --edrw, ext-dsp-raw    [GeneratedDspFilePATH]                         > Extracts the raw GCADPCM/DSPADPCM Audio from a Nintendo *.dsp Audio File.
        --rsnd, replace-snd    [SegmentFilePATH]        [DspFilePATH]         > Convert Nintendo *.dsp Audio File to *.fsb Soundbank File.
+       --gmtd, get-metadata   [CombinedAudioPATH]                            > Get info such as Header-Size, Number of Audio Files, and if the CombinedAudio.bin Archive has been Modified.
        --upd,  update                                                        > Updates From Current Version to the Latest Version of 'CATool.py'.
        --rstr, restore                                                       > Basically an Emergancy Version of '--upd' that Wipes all Files from CATool and Reinstalls them.
        --h,    help                                                          > Displays this Message.

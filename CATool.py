@@ -1,6 +1,6 @@
 import os, sys, re, urllib.request, time, zipfile, io, winsound, shutil
 from tkinter import messagebox
-VERSION = 2.0
+VERSION = 2.1
 
 try:
     import requests
@@ -243,11 +243,12 @@ def info_help():
        --cwav, convert-wave   [SegmentFilePATH]        [FileToConvertPATH]   > Convert Custom Audio to Nintendo 'GCADPCM'/'DSADPCM' Format.
        --pa,   play-audio     [WaveFilePATH]                                 > Play Audio from a Wave-File.
        --gmsc, generate-music [WaveFilePATH]                                 > Generates a Valid Music FSB Soundbank File for Minecraft 3DS Edition from a Wave File.
-       --atw,  to-wave        [AudioFileToConvertToWavPATH]                  > Convert basically any Audio format like *.ogg or *.mp3 to Wave Format.
+       --atw,  to-wave        [AudioFileToConvertToWavPATH]                  > Convert basically any Audio format like *.fsb, *.dsp or Formats like *.mp3 to Wave Format.
        --impg, inst-ffmpeg                                                   > Install FFMPEG to '{os.path.dirname(__file__)}\\extrcd\\mpg\\bin'.
        --efrw, ext-fsb-raw    [SegmentFilePATH]                              > Extracts the raw GCADPCM/DSPADPCM Audio from an *.fsb Soundbank File.
        --edrw, ext-dsp-raw    [GeneratedDspFilePATH]                         > Extracts the raw GCADPCM/DSPADPCM Audio from a Nintendo *.dsp Audio File.
        --rsnd, replace-snd    [SegmentFilePATH]        [DspFilePATH]         > Convert Nintendo *.dsp Audio File to *.fsb Soundbank File.
+       --gmtd, get-metadata   [CombinedAudioPATH]                            > Get info such as Header-Size, Number of Audio Files, and if the CombinedAudio.bin Archive has been Modified.
        --upd,  update                                                        > Updates From Current Version to the Latest Version of 'CATool.py'.
        --rstr, restore                                                       > Basically an Emergancy Version of '--upd' that Wipes all Files from CATool and Reinstalls them.
        --h,    help                                                          > Displays this Message.\n\n\n""")
@@ -586,8 +587,101 @@ def getRawAudioSizeAndData():
         f.close()
         return gcadpcm_len, file_size
 
+def count_specific_bytes():
+    file_path = sys.argv[2]
+    search_string = b'FSB5'
+    sixCount = 0
+    twoCount = 0
+    celtCount = 0
+    fmodCount = 0
+    oneCount = 0
+    interleavedFormat = 0
+
+    with open(file_path, 'rb') as file:
+        file_content = file.read()
+        position = 0
+        
+        while position != -1:
+            position = file_content.find(search_string, position)
+            
+            if position == -1:
+                break
+
+            skip_position = position + len(search_string) + 0x14
+            if skip_position < len(file_content):
+                byte_value = file_content[skip_position]
+
+                if byte_value == 0x06:
+                    sixCount += 1
+                elif byte_value == 0x02:
+                    twoCount += 1
+                elif byte_value == 0x07:
+                    fmodCount += 1
+                elif byte_value == 0x01:
+                    oneCount += 1
+                else:
+                    celtCount += 1
+
+            interleaved_position = position + len(search_string) + 0x20
+            if interleaved_position < len(file_content) and byte_value == 0x06:
+                interleaved_byte_value = file_content[interleaved_position]
+
+                if interleaved_byte_value == 0x02:
+                    interleavedFormat += 1
+            
+            position += len(search_string)
+    
+    return sixCount, twoCount, celtCount, fmodCount, oneCount, interleavedFormat
+
+def getMetaData():
+    combinedAudiof = sys.argv[2]
+    backupFile = f".\\extrcd\\def_aud.bin"
+    searchStr = b'FSB5'
+    count = 0
+    with open(combinedAudiof, 'rb') as file:
+        data0 = file.read()
+        count = data0.count(searchStr)
+        file.seek(0x00)
+        position = data0.find(searchStr)
+        if position == -1:
+            raise ValueError("The search string was not found in the file.")
+        lngth = len(data0[:position])
+
+    with open(backupFile,'rb') as f1:
+        data1 = f1.read()
+
+    if data0 != data1:
+        answer = 'Yes'
+    else:
+        answer = "No"
+
+    sixCount, twoCount, celtCount, fmodCount, oneCount, interleavedFormat = count_specific_bytes()
+    print(f"""
+Has File Been Modified?           - {answer}.
+Header Length?                    - {lngth}.
+How Many Audio Files?             - {count}.
+
+How Many GCADPCM File Formats?    - {sixCount}.
+How Many GCADPCM Interleaved?     - {interleavedFormat}.
+How Many GCADPCM Flat?            - {sixCount-interleavedFormat}
+
+How Many PCM8 File Formats?       - {oneCount}.
+How Many PCM16 File Formats?      - {twoCount}.
+How Many CELT File Formats?       - {celtCount}.
+How Many IMAFMOD File Formats?    - {fmodCount}.
+        \n""")
+
+
 if __name__ == '__main__':
     try:
+        latest_release = get_latest_release_number()
+        if os.path.exists('force-s.bin') == False:
+            if type(latest_release) == float:
+                if latest_release > VERSION:
+                    print(f"\nA new version of CombinedAudioTool (CATool) is Avaliable.\nUse '--upd' to Get the Latest Release!")
+            else:
+                print("\nNo Internet Avaliable, please connect to the Internet to Check your Version or Update it.")
+
         callable = sys.argv[1]
         if callable == 'extract-ca' or callable == '--eca':
             extrCombAudio()
@@ -660,6 +754,9 @@ if __name__ == '__main__':
 
         if callable == 'replace-snd' or callable == '--rsnd':
             replaceFSBAudio()
+
+        if callable == 'get-metadata' or callable == '--gmtd':
+            getMetaData()
 
     except IndexError:
         info_help()

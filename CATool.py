@@ -1,6 +1,6 @@
 import os, sys, re, urllib.request, time, zipfile, io, winsound, shutil
 from tkinter import messagebox
-VERSION = 2.1
+VERSION = 2.2
 
 try:
     import requests
@@ -674,14 +674,6 @@ How Many IMAFMOD File Formats?    - {fmodCount}.
 
 if __name__ == '__main__':
     try:
-        latest_release = get_latest_release_number()
-        if os.path.exists('force-s.bin') == False:
-            if type(latest_release) == float:
-                if latest_release > VERSION:
-                    print(f"\nA new version of CombinedAudioTool (CATool) is Avaliable.\nUse '--upd' to Get the Latest Release!")
-            else:
-                print("\nNo Internet Avaliable, please connect to the Internet to Check your Version or Update it.")
-
         callable = sys.argv[1]
         if callable == 'extract-ca' or callable == '--eca':
             extrCombAudio()

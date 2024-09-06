@@ -22,6 +22,7 @@
 - Install FFMPEG via Command Line.
 - Add your own Custom Audio/Ambience/SFX to Minecraft 3DS.
 - Get MetaData from `CombinedAudio.bin` Archive.
+- Change between Interleaved/Flat/Weaved for `SegmentFile`.
 
 ## Download(s):
 - Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v2.1/CATool.zip).

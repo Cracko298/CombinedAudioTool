@@ -1,6 +1,6 @@
-import os, sys, re, urllib.request, time, zipfile, io, winsound, shutil
+import os, sys, re, urllib.request, time, zipfile, io, winsound, shutil, struct
 from tkinter import messagebox
-VERSION = 2.2
+VERSION = 2.3
 
 try:
     import requests
@@ -78,31 +78,38 @@ def extrCombAudio():
 
 def find_segment_name():
     file_path = sys.argv[2]
-    search_pattern = b'\x00\x04\x00\x00\x00'
-    max_search_length = 0xFF
+    with open(file_path, 'rb') as f0:
+        f0.seek(0x14)
+        offset_value = struct.unpack('<I', f0.read(0x04))[0]
+        f0.seek(0, 2)
+        new_position = f0.tell() - offset_value
+        f0.seek(new_position)
+        decoded_string = ''
+        string_started = False
+        increment_counter = 0
 
-    try:
-        with open(file_path, 'rb') as f:
-            segment = f.read(max_search_length)
-    except FileNotFoundError:
-        print(f"File not found: {file_path}")
-        return None
-    except IOError as e:
-        print(f"Error reading file: {e}")
-        return None
+        while f0.tell() > 0:
+            f0.seek(-1, 1)
+            current_byte = f0.read(1)
+            f0.seek(-1, 1)
+            byte_value = ord(current_byte)
 
-    pattern_start = segment.find(search_pattern)
-    if pattern_start == -1:
-        print("Pattern not found")
-        return None
+            if byte_value == 0x00:
+                if string_started:
+                    break
+                else:
+                    continue
+            
+            elif byte_value == 0x04:
+                print("No Name for SFX Avaliable.")
+                break
 
-    string_start = pattern_start + len(search_pattern)
-    string_end = string_start
-    while string_end < len(segment) and segment[string_end] != 0x00:
-        string_end += 1
-
-    segment_name = segment[string_start:string_end].decode('utf-8')
-    return segment_name
+            elif 32 <= byte_value <= 126:
+                decoded_string += chr(byte_value)
+                increment_counter += 1
+                string_started = True
+        
+        return decoded_string[::-1]
 
 def rename_segment():
     segment_file = sys.argv[2]
@@ -227,6 +234,8 @@ def formatsToWave():
 
 def info_help():
     print(f"""\n
+THIS IS A COMMAND LINE TOOL! YOU MUST USE POWERSHELL (or) CMD PROMPT TO USE. 
+
     python CATool.py
        --eca,  extract-ca     [CombinedAudioPATH]                            > Extracts All FSB Soundbank Files from the CombinedAudio.bin Archive.
        --fn,   find-sn        [SegmentFilePATH]                              > Find the Segment Name from an Extracted FSB Soundbank File via --eca Flag.
@@ -249,6 +258,7 @@ def info_help():
        --edrw, ext-dsp-raw    [GeneratedDspFilePATH]                         > Extracts the raw GCADPCM/DSPADPCM Audio from a Nintendo *.dsp Audio File.
        --rsnd, replace-snd    [SegmentFilePATH]        [DspFilePATH]         > Convert Nintendo *.dsp Audio File to *.fsb Soundbank File.
        --gmtd, get-metadata   [CombinedAudioPATH]                            > Get info such as Header-Size, Number of Audio Files, and if the CombinedAudio.bin Archive has been Modified.
+       --chmd, change-mode    [SegmentFilePATH]        [Integer (0-2)]       > Change the Mode the File is Played (interleaved, flat, and weaved). *May Enhance or Denhance the SFX.
        --upd,  update                                                        > Updates From Current Version to the Latest Version of 'CATool.py'.
        --rstr, restore                                                       > Basically an Emergancy Version of '--upd' that Wipes all Files from CATool and Reinstalls them.
        --h,    help                                                          > Displays this Message.\n\n\n""")
@@ -671,6 +681,16 @@ How Many CELT File Formats?       - {celtCount}.
 How Many IMAFMOD File Formats?    - {fmodCount}.
         \n""")
 
+def changeAdpcmInterleave():
+    file_path = sys.argv[2]
+    replacableInt = int(sys.argv[3])
+    if replacableInt > 2:
+        print("Invalid Number/Integer")
+        return
+    with open(file_path, 'rb+') as f0:
+        f0.seek(0x20)
+        f0.write(int(replacableInt.to_bytes(4, 'little')))
+        f0.close()
 
 if __name__ == '__main__':
     try:
@@ -749,6 +769,9 @@ if __name__ == '__main__':
 
         if callable == 'get-metadata' or callable == '--gmtd':
             getMetaData()
+        
+        if callable == 'change-mode' or callable == '--chmd':
+            changeAdpcmInterleave()
 
     except IndexError:
         info_help()

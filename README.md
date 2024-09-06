@@ -29,7 +29,10 @@
 
 ## Usage:
 ```
-python CATool.py
+
+THIS IS A COMMAND LINE TOOL! YOU MUST USE POWERSHELL (or) CMD PROMPT TO USE. 
+
+    python CATool.py
        --eca,  extract-ca     [CombinedAudioPATH]                            > Extracts All FSB Soundbank Files from the CombinedAudio.bin Archive.
        --fn,   find-sn        [SegmentFilePATH]                              > Find the Segment Name from an Extracted FSB Soundbank File via --eca Flag.
        --rs,   rename-s       [SegmentFilePATH]                              > Rename a Segment File FSB Soundbank File back to it's Original Filename.
@@ -51,6 +54,7 @@ python CATool.py
        --edrw, ext-dsp-raw    [GeneratedDspFilePATH]                         > Extracts the raw GCADPCM/DSPADPCM Audio from a Nintendo *.dsp Audio File.
        --rsnd, replace-snd    [SegmentFilePATH]        [DspFilePATH]         > Convert Nintendo *.dsp Audio File to *.fsb Soundbank File.
        --gmtd, get-metadata   [CombinedAudioPATH]                            > Get info such as Header-Size, Number of Audio Files, and if the CombinedAudio.bin Archive has been Modified.
+       --chmd, change-mode    [SegmentFilePATH]        [Integer (0-2)]       > Change the Mode the File is Played (interleaved, flat, and weaved). *May Enhance or Denhance the SFX.
        --upd,  update                                                        > Updates From Current Version to the Latest Version of 'CATool.py'.
        --rstr, restore                                                       > Basically an Emergancy Version of '--upd' that Wipes all Files from CATool and Reinstalls them.
        --h,    help                                                          > Displays this Message.

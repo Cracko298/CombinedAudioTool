@@ -68,562 +68,562 @@ python CATool.py --h
 
 ## Sound ID's
 ```
-0. thunder1
-1. thunder2
-2. explode1
-3. explode2
-4. rain1
-5. rain2
-6. shimmerblock
-7. fire_crackle2
-8. add_item1
-9. add_item2
-10. add_item3
-11. break1
-12. break2
-13. place1
-14. place2
-15. remove_item1
-16. remove_item2
-17. rotate_item1
-18. rotate_item2
-19. death1
-20. death3
-21. grow1
-22. grow4
-23. empty_lava1
-24. empty_lava2
-25. empty1
-26. empty2
-27. fill_lava1
-28. fill_lava2
-29. fill1
-30. fill2
-31. splash
-32. fallbig
-33. fallsmall
-34. weak1
-35. weak2
-36. weak3
-37. hit1
-38. hit2
-39. hit3
-40. cloth1
-41. cloth2
-42. cloth3
-43. grass1
-44. grass2
-45. grass3
-46. gravel1
-47. gravel2
-48. gravel3
-49. sand1
-50. sand2
-51. sand3
-52. snow1
-53. snow2
-54. snow3
-55. stone1
-56. stone2
-57. stone3
-58. wood1
-59. wood2
-60. wood3
-61. in
-62. out
-63. fire
-64. ignite
-65. lava
-66. lavapop
-67. water
-68. base
-69. death
-70. hurt1
-71. hurt2
-72. hurt3
-73. idle1
-74. idle2
-75. idle3
-76. takeoff
-77. breathe1
-78. breathe2
-79. death
-80. hit1
-81. hit2
-82. hit3
-83. fireball4
-84. hurt1
-85. hurt2
-86. plop
-87. say1
-88. say2
-89. say3
-90. step1
-91. step2
-92. hurt1
-93. hurt2
-94. hurt3
-95. say1
-96. say2
-97. say3
-98. step1
-99. step2
-100. step3
-101. milk1
-102. death
-103. say1
-104. say2
-105. say3
-106. death
-107. hit1
-108. hit2
-109. hit3
-110. idle1
-111. idle2
-112. idle3
-113. portal
-114. portal2
-115. scream1
-116. scream2
-117. scream3
-118. stare
-119. hit1
-120. hit2
-121. wings1
-122. wings3
-123. wings5
-124. growl2
-125. growl3
-126. affectionate_scream
-127. charge
-128. death
-129. moan1
-130. moan2
-131. moan3
-132. scream1
-133. scream2
-134. scream3
-135. ambient1
-136. attack_loop
-137. curse
-138. elder_death
-139. elder_hit1
-140. elder_idle3
-141. flop1
-142. guardian_death
-143. 
-144. land_death
-145. land_hit1
-146. land_idle1
-147. angry1
-148. death1
-149. death2
-150. idle1
-151. idle2
-152. idle3
-153. idle4
-154. idle5
-155. spit1
-156. spit2
-157. hurt1
-158. hurt2
-159. hurt3
-160. eat1
-161. eat2
-162. eat3
-163. step1
-164. step2
-165. step3
-166. step4
-167. step5
-168. swag
-169. angry1
-170. armor
-171. breathe1
-172. breathe2
-173. breathe3
-174. death
-175. angry1
-176. angry2
-177. death
-178. hit1
-179. hit2
-180. hit3
-181. idle1
-182. idle2
-183. idle3
-184. eat1
-185. eat2
-186. eat3
-187. gallop1
-188. gallop2
-189. gallop3
-190. hit1
-191. hit2
-192. hit3
-193. idle1
-194. idle2
-195. idle3
-196. jump
-197. land
-198. leather
-199. death
-200. hit1
-201. hit2
-202. hit3
-203. idle1
-204. idle2
-205. idle3
-206. soft1
-207. soft2
-208. soft3
-209. wood1
-210. wood2
-211. wood3
-212. death
-213. hit1
-214. hit2
-215. hit3
-216. idle1
-217. idle2
-218. idle3
-219. idle2
-220. death1
-221. hurt2
-222. step4
-223. throw
-224. death
-225. hit1
-226. hit2
-227. hit3
-228. walk1
-229. walk2
-230. walk3
-231. ambient1
-232. ambient2
-233. ambient5
-234. close1
-235. close3
-236. death1
-237. death2
-238. hurt_close1
-239. hurt_close2
-240. hurt1
-241. hurt2
-242. hurt3
-243. open2
-244. open3
-245. shoot1
-246. shoot4
-247. hit1
-248. hit2
-249. hit3
-250. big1
-251. big2
-252. big3
-253. jump1
-254. jump2
-255. jump3
-256. small1
-257. small2
-258. small3
-259. death
-260. pig_boost
-261. pig_boost
-262. pig_boost
-263. say1
-264. say2
-265. say3
-266. step1
-267. step2
-268. step3
-269. hurt1
-270. hurt2
-271. hurt3
-272. idle1
-273. idle2
-274. idle3
-275. hop1
-276. hop2
-277. hop3
-278. bunnymurder
-279. say1
-280. say2
-281. say3
-282. shear
-283. step1
-284. step2
-285. step3
-286. 
-287. hit2
-288. hit3
-289. kill
-290. say1
-291. say2
-292. say3
-293. step1
-294. step2
-295. step3
-296. death
-297. hurt1
-298. hurt2
-299. hurt3
-300. say1
-301. say2
-302. say3
-303. step1
-304. step2
-305. step3
-306. big1
-307. big2
-308. big3
-309. small1
-310. small2
-311. small3
-312. attack1
-313. attack2
-314. death1
-315. death2
-316. death3
-317. hurt1
-318. hurt2
-319. hurt3
-320. bow
-321. death
-322. say1
-323. say2
-324. say3
-325. step1
-326. step2
-327. step3
-328. ambient1
-329. ambient2
-330. death3
-331. hurt1
-332. hurt2
-333. idle2
-334. death1
-335. hurt4
-336. step3
-337. death
-338. haggle1
-339. haggle3
-340. hit1
-341. hit2
-342. hit3
-343. idle1
-344. idle2
-345. idle3
-346. no1
-347. no2
-348. yes1
-349. yes2
-350. death1
-351. death2
-352. hurt1
-353. hurt2
-354. hurt3
-355. idle1
-356. idle2
-357. idle3
-358. fangs
-359. idle1
-360. idle2
-361. idle3
-362. cast1
-363. cast2
-364. death1
-365. death2
-366. hurt1
-367. hurt2
-368. prepare_attack1
-369. prepare_attack2
-370. prepare_summon
-371. prepare_wololo
-372. idle1
-373. idle2
-374. death1
-375. death2
-376. hurt1
-377. hurt2
-378. charge1
-379. charge2
-380. ambient5
-381. ambient1
-382. ambient2
-383. death1
-384. death2
-385. death3
-386. hurt1
-387. hurt2
-388. hurt3
-389. drink1
-390. drink2
-391. drink3
-392. throw1
-393. throw2
-394. throw3
-395. idle1
-396. woodbreak
-397. death
-398. hurt1
-399. shoot
-400. spawn
-401. bark1
-402. bark2
-403. bark3
-404. death
-405. growl1
-406. growl2
-407. hurt1
-408. hurt2
-409. hurt3
-410. panting
-411. shake
-412. step1
-413. step2
-414. step3
-415. whine
-416. hiss1
-417. hiss2
-418. hitt1
-419. hitt2
-420. hitt3
-421. meow1
-422. meow2
-423. meow3
-424. purr1
-425. purr2
-426. purreow1
-427. purreow2
-428. idle1
-429. idle4
-430. idle1
-431. idle2
-432. step1
-433. step2
-434. warning1
-435. warning2
-436. hurt1
-437. hurt2
-438. death1
-439. death2
-440. death
-441. hurt1
-442. hurt2
-443. remedy
-444. unfect
-445. say1
-446. say2
-447. step1
-448. step2
-449. step3
-450. wood1
-451. wood2
-452. wood3
-453. zpig1
-454. zpig2
-455. zpig3
-456. zpigangry1
-457. zpigangry2
-458. zpigangry3
-459. zpigdeath
-460. zpighurt1
-461. zpighurt2
-462. say1
-463. say2
-464. say3
-465. death
-466. hurt1
-467. hurt2
-468. bass
-469. bassattack
-470. bd
-471. harp
-472. hat
-473. pling
-474. snare
-475. portal
-476. anvil_break
-477. anvil_land
-478. anvil_use
-479. bowhit1
-480. bowhit2
-481. bowhit3
-482. break
-483. burp
-484. chestclosed
-485. chestopen
-486. close
-487. open
-488. click
-489. door_close
-490. door_open
-491. drink
-492. eat1
-493. eat2
-494. eat3
-495. fizz
-496. fuse
-497. glass1
-498. glass2
-499. glass3
-500. levelup
-501. orb
-502. pop
-503. pop2
-504. swim1
-505. swim3
-506. swim4
-507. hurt
-508. toast
-509. use_totem
-510. camera1
-511. camera2
-512. camera3
-513. ladder1
-514. ladder2
-515. ladder3
-516. cloth1
-517. cloth2
-518. cloth3
-519. grass1
-520. grass2
-521. grass3
-522. gravel1
-523. gravel2
-524. gravel3
-525. sand1
-526. sand2
-527. sand3
-528. snow1
-529. snow2
-530. snow3
-531. stone1
-532. stone2
-533. stone3
-534. wood1
-535. wood2
-536. wood3
-537. cloth1
-538. cloth2
-539. cloth3
-540. grass1
-541. grass2
-542. grass3
-543. gravel1
-544. gravel2
-545. gravel3
-546. sand1
-547. sand2
-548. sand3
-549. snow1
-550. snow2
-551. snow3
-552. stone1
-553. stone2
-554. stone3
-555. wood1
-556. wood2
-557. wood3
+thunder1 - segment_0.fsb
+thunder2 - segment_1.fsb
+explode1 - segment_2.fsb
+explode2 - segment_3.fsb
+rain1 - segment_4.fsb
+rain2 - segment_5.fsb
+shimmerblock - segment_6.fsb
+fire_crackle2 - segment_7.fsb
+add_item1 - segment_8.fsb
+add_item2 - segment_9.fsb
+add_item3 - segment_10.fsb
+break1 - segment_11.fsb
+break2 - segment_12.fsb
+place1 - segment_13.fsb
+place2 - segment_14.fsb
+remove_item1 - segment_15.fsb
+remove_item2 - segment_16.fsb
+rotate_item1 - segment_17.fsb
+rotate_item2 - segment_18.fsb
+death1 - segment_19.fsb
+death3 - segment_20.fsb
+grow1 - segment_21.fsb
+grow4 - segment_22.fsb
+empty_lava1 - segment_23.fsb
+empty_lava2 - segment_24.fsb
+empty1 - segment_25.fsb
+empty2 - segment_26.fsb
+fill_lava1 - segment_27.fsb
+fill_lava2 - segment_28.fsb
+fill1 - segment_29.fsb
+fill2 - segment_30.fsb
+splash - segment_31.fsb
+fallbig - segment_32.fsb
+fallsmall - segment_33.fsb
+weak1 - segment_34.fsb
+weak2 - segment_35.fsb
+weak3 - segment_36.fsb
+hit1 - segment_37.fsb
+hit2 - segment_38.fsb
+hit3 - segment_39.fsb
+cloth1 - segment_40.fsb
+cloth2 - segment_41.fsb
+cloth3 - segment_42.fsb
+grass1 - segment_43.fsb
+grass2 - segment_44.fsb
+grass3 - segment_45.fsb
+gravel1 - segment_46.fsb
+gravel2 - segment_47.fsb
+gravel3 - segment_48.fsb
+sand1 - segment_49.fsb
+sand2 - segment_50.fsb
+sand3 - segment_51.fsb
+snow1 - segment_52.fsb
+snow2 - segment_53.fsb
+snow3 - segment_54.fsb
+stone1 - segment_55.fsb
+stone2 - segment_56.fsb
+stone3 - segment_57.fsb
+wood1 - segment_58.fsb
+wood2 - segment_59.fsb
+wood3 - segment_60.fsb
+in - segment_61.fsb
+out - segment_62.fsb
+fire - segment_63.fsb
+ignite - segment_64.fsb
+lava - segment_65.fsb
+lavapop - segment_66.fsb
+water - segment_67.fsb
+base - segment_68.fsb
+death - segment_69.fsb
+hurt1 - segment_70.fsb
+hurt2 - segment_71.fsb
+hurt3 - segment_72.fsb
+idle1 - segment_73.fsb
+idle2 - segment_74.fsb
+idle3 - segment_75.fsb
+takeoff - segment_76.fsb
+breathe1 - segment_77.fsb
+breathe2 - segment_78.fsb
+death - segment_79.fsb
+hit1 - segment_80.fsb
+hit2 - segment_81.fsb
+hit3 - segment_82.fsb
+fireball4 - segment_83.fsb
+hurt1 - segment_84.fsb
+hurt2 - segment_85.fsb
+plop - segment_86.fsb
+say1 - segment_87.fsb
+say2 - segment_88.fsb
+say3 - segment_89.fsb
+step1 - segment_90.fsb
+step2 - segment_91.fsb
+hurt1 - segment_92.fsb
+hurt2 - segment_93.fsb
+hurt3 - segment_94.fsb
+say1 - segment_95.fsb
+say2 - segment_96.fsb
+say3 - segment_97.fsb
+step1 - segment_98.fsb
+step2 - segment_99.fsb
+step3 - segment_100.fsb
+milk1 - segment_101.fsb
+death - segment_102.fsb
+say1 - segment_103.fsb
+say2 - segment_104.fsb
+say3 - segment_105.fsb
+death - segment_106.fsb
+hit1 - segment_107.fsb
+hit2 - segment_108.fsb
+hit3 - segment_109.fsb
+idle1 - segment_110.fsb
+idle2 - segment_111.fsb
+idle3 - segment_112.fsb
+portal - segment_113.fsb
+portal2 - segment_114.fsb
+scream1 - segment_115.fsb
+scream2 - segment_116.fsb
+scream3 - segment_117.fsb
+stare - segment_118.fsb
+hit1 - segment_119.fsb
+hit2 - segment_120.fsb
+wings1 - segment_121.fsb
+wings3 - segment_122.fsb
+wings5 - segment_123.fsb
+growl2 - segment_124.fsb
+growl3 - segment_125.fsb
+affectionate_scream - segment_126.fsb
+charge - segment_127.fsb
+death - segment_128.fsb
+moan1 - segment_129.fsb
+moan2 - segment_130.fsb
+moan3 - segment_131.fsb
+scream1 - segment_132.fsb
+scream2 - segment_133.fsb
+scream3 - segment_134.fsb
+ambient1 - segment_135.fsb
+attack_loop - segment_136.fsb
+curse - segment_137.fsb
+elder_death - segment_138.fsb
+elder_hit1 - segment_139.fsb
+elder_idle3 - segment_140.fsb
+flop1 - segment_141.fsb
+guardian_death - segment_142.fsb
+NULL_0 - segment_143.fsb
+land_death - segment_144.fsb
+land_hit1 - segment_145.fsb
+land_idle1 - segment_146.fsb
+angry1 - segment_147.fsb
+death1 - segment_148.fsb
+death2 - segment_149.fsb
+idle1 - segment_150.fsb
+idle2 - segment_151.fsb
+idle3 - segment_152.fsb
+idle4 - segment_153.fsb
+idle5 - segment_154.fsb
+spit1 - segment_155.fsb
+spit2 - segment_156.fsb
+hurt1 - segment_157.fsb
+hurt2 - segment_158.fsb
+hurt3 - segment_159.fsb
+eat1 - segment_160.fsb
+eat2 - segment_161.fsb
+eat3 - segment_162.fsb
+step1 - segment_163.fsb
+step2 - segment_164.fsb
+step3 - segment_165.fsb
+step4 - segment_166.fsb
+step5 - segment_167.fsb
+swag - segment_168.fsb
+angry1 - segment_169.fsb
+armor - segment_170.fsb
+breathe1 - segment_171.fsb
+breathe2 - segment_172.fsb
+breathe3 - segment_173.fsb
+death - segment_174.fsb
+angry1 - segment_175.fsb
+angry2 - segment_176.fsb
+death - segment_177.fsb
+hit1 - segment_178.fsb
+hit2 - segment_179.fsb
+hit3 - segment_180.fsb
+idle1 - segment_181.fsb
+idle2 - segment_182.fsb
+idle3 - segment_183.fsb
+eat1 - segment_184.fsb
+eat2 - segment_185.fsb
+eat3 - segment_186.fsb
+gallop1 - segment_187.fsb
+gallop2 - segment_188.fsb
+gallop3 - segment_189.fsb
+hit1 - segment_190.fsb
+hit2 - segment_191.fsb
+hit3 - segment_192.fsb
+idle1 - segment_193.fsb
+idle2 - segment_194.fsb
+idle3 - segment_195.fsb
+jump - segment_196.fsb
+land - segment_197.fsb
+leather - segment_198.fsb
+death - segment_199.fsb
+hit1 - segment_200.fsb
+hit2 - segment_201.fsb
+hit3 - segment_202.fsb
+idle1 - segment_203.fsb
+idle2 - segment_204.fsb
+idle3 - segment_205.fsb
+soft1 - segment_206.fsb
+soft2 - segment_207.fsb
+soft3 - segment_208.fsb
+wood1 - segment_209.fsb
+wood2 - segment_210.fsb
+wood3 - segment_211.fsb
+death - segment_212.fsb
+hit1 - segment_213.fsb
+hit2 - segment_214.fsb
+hit3 - segment_215.fsb
+idle1 - segment_216.fsb
+idle2 - segment_217.fsb
+idle3 - segment_218.fsb
+idle2 - segment_219.fsb
+death1 - segment_220.fsb
+hurt2 - segment_221.fsb
+step4 - segment_222.fsb
+throw - segment_223.fsb
+death - segment_224.fsb
+hit1 - segment_225.fsb
+hit2 - segment_226.fsb
+hit3 - segment_227.fsb
+walk1 - segment_228.fsb
+walk2 - segment_229.fsb
+walk3 - segment_230.fsb
+ambient1 - segment_231.fsb
+ambient2 - segment_232.fsb
+ambient5 - segment_233.fsb
+close1 - segment_234.fsb
+close3 - segment_235.fsb
+death1 - segment_236.fsb
+death2 - segment_237.fsb
+hurt_close1 - segment_238.fsb
+hurt_close2 - segment_239.fsb
+hurt1 - segment_240.fsb
+hurt2 - segment_241.fsb
+hurt3 - segment_242.fsb
+open2 - segment_243.fsb
+open3 - segment_244.fsb
+shoot1 - segment_245.fsb
+shoot4 - segment_246.fsb
+hit1 - segment_247.fsb
+hit2 - segment_248.fsb
+hit3 - segment_249.fsb
+big1 - segment_250.fsb
+big2 - segment_251.fsb
+big3 - segment_252.fsb
+jump1 - segment_253.fsb
+jump2 - segment_254.fsb
+jump3 - segment_255.fsb
+small1 - segment_256.fsb
+small2 - segment_257.fsb
+small3 - segment_258.fsb
+death - segment_259.fsb
+pig_boost - segment_260.fsb
+pig_boost - segment_261.fsb
+pig_boost - segment_262.fsb
+say1 - segment_263.fsb
+say2 - segment_264.fsb
+say3 - segment_265.fsb
+step1 - segment_266.fsb
+step2 - segment_267.fsb
+step3 - segment_268.fsb
+hurt1 - segment_269.fsb
+hurt2 - segment_270.fsb
+hurt3 - segment_271.fsb
+idle1 - segment_272.fsb
+idle2 - segment_273.fsb
+idle3 - segment_274.fsb
+hop1 - segment_275.fsb
+hop2 - segment_276.fsb
+hop3 - segment_277.fsb
+bunnymurder - segment_278.fsb
+say1 - segment_279.fsb
+say2 - segment_280.fsb
+say3 - segment_281.fsb
+shear - segment_282.fsb
+step1 - segment_283.fsb
+step2 - segment_284.fsb
+step3 - segment_285.fsb
+NULL_1 - segment_286.fsb
+hit2 - segment_287.fsb
+hit3 - segment_288.fsb
+kill - segment_289.fsb
+say1 - segment_290.fsb
+say2 - segment_291.fsb
+say3 - segment_292.fsb
+step1 - segment_293.fsb
+step2 - segment_294.fsb
+step3 - segment_295.fsb
+death - segment_296.fsb
+hurt1 - segment_297.fsb
+hurt2 - segment_298.fsb
+hurt3 - segment_299.fsb
+say1 - segment_300.fsb
+say2 - segment_301.fsb
+say3 - segment_302.fsb
+step1 - segment_303.fsb
+step2 - segment_304.fsb
+step3 - segment_305.fsb
+big1 - segment_306.fsb
+big2 - segment_307.fsb
+big3 - segment_308.fsb
+small1 - segment_309.fsb
+small2 - segment_310.fsb
+small3 - segment_311.fsb
+attack1 - segment_312.fsb
+attack2 - segment_313.fsb
+death1 - segment_314.fsb
+death2 - segment_315.fsb
+death3 - segment_316.fsb
+hurt1 - segment_317.fsb
+hurt2 - segment_318.fsb
+hurt3 - segment_319.fsb
+bow - segment_320.fsb
+death - segment_321.fsb
+say1 - segment_322.fsb
+say2 - segment_323.fsb
+say3 - segment_324.fsb
+step1 - segment_325.fsb
+step2 - segment_326.fsb
+step3 - segment_327.fsb
+ambient1 - segment_328.fsb
+ambient2 - segment_329.fsb
+death3 - segment_330.fsb
+hurt1 - segment_331.fsb
+hurt2 - segment_332.fsb
+idle2 - segment_333.fsb
+death1 - segment_334.fsb
+hurt4 - segment_335.fsb
+step3 - segment_336.fsb
+death - segment_337.fsb
+haggle1 - segment_338.fsb
+haggle3 - segment_339.fsb
+hit1 - segment_340.fsb
+hit2 - segment_341.fsb
+hit3 - segment_342.fsb
+idle1 - segment_343.fsb
+idle2 - segment_344.fsb
+idle3 - segment_345.fsb
+no1 - segment_346.fsb
+no2 - segment_347.fsb
+yes1 - segment_348.fsb
+yes2 - segment_349.fsb
+death1 - segment_350.fsb
+death2 - segment_351.fsb
+hurt1 - segment_352.fsb
+hurt2 - segment_353.fsb
+hurt3 - segment_354.fsb
+idle1 - segment_355.fsb
+idle2 - segment_356.fsb
+idle3 - segment_357.fsb
+fangs - segment_358.fsb
+idle1 - segment_359.fsb
+idle2 - segment_360.fsb
+idle3 - segment_361.fsb
+cast1 - segment_362.fsb
+cast2 - segment_363.fsb
+death1 - segment_364.fsb
+death2 - segment_365.fsb
+hurt1 - segment_366.fsb
+hurt2 - segment_367.fsb
+prepare_attack1 - segment_368.fsb
+prepare_attack2 - segment_369.fsb
+prepare_summon - segment_370.fsb
+prepare_wololo - segment_371.fsb
+idle1 - segment_372.fsb
+idle2 - segment_373.fsb
+death1 - segment_374.fsb
+death2 - segment_375.fsb
+hurt1 - segment_376.fsb
+hurt2 - segment_377.fsb
+charge1 - segment_378.fsb
+charge2 - segment_379.fsb
+ambient5 - segment_380.fsb
+ambient1 - segment_381.fsb
+ambient2 - segment_382.fsb
+death1 - segment_383.fsb
+death2 - segment_384.fsb
+death3 - segment_385.fsb
+hurt1 - segment_386.fsb
+hurt2 - segment_387.fsb
+hurt3 - segment_388.fsb
+drink1 - segment_389.fsb
+drink2 - segment_390.fsb
+drink3 - segment_391.fsb
+throw1 - segment_392.fsb
+throw2 - segment_393.fsb
+throw3 - segment_394.fsb
+idle1 - segment_395.fsb
+woodbreak - segment_396.fsb
+death - segment_397.fsb
+hurt1 - segment_398.fsb
+shoot - segment_399.fsb
+spawn - segment_400.fsb
+bark1 - segment_401.fsb
+bark2 - segment_402.fsb
+bark3 - segment_403.fsb
+death - segment_404.fsb
+growl1 - segment_405.fsb
+growl2 - segment_406.fsb
+hurt1 - segment_407.fsb
+hurt2 - segment_408.fsb
+hurt3 - segment_409.fsb
+panting - segment_410.fsb
+shake - segment_411.fsb
+step1 - segment_412.fsb
+step2 - segment_413.fsb
+step3 - segment_414.fsb
+whine - segment_415.fsb
+hiss1 - segment_416.fsb
+hiss2 - segment_417.fsb
+hitt1 - segment_418.fsb
+hitt2 - segment_419.fsb
+hitt3 - segment_420.fsb
+meow1 - segment_421.fsb
+meow2 - segment_422.fsb
+meow3 - segment_423.fsb
+purr1 - segment_424.fsb
+purr2 - segment_425.fsb
+purreow1 - segment_426.fsb
+purreow2 - segment_427.fsb
+idle1 - segment_428.fsb
+idle4 - segment_429.fsb
+idle1 - segment_430.fsb
+idle2 - segment_431.fsb
+step1 - segment_432.fsb
+step2 - segment_433.fsb
+warning1 - segment_434.fsb
+warning2 - segment_435.fsb
+hurt1 - segment_436.fsb
+hurt2 - segment_437.fsb
+death1 - segment_438.fsb
+death2 - segment_439.fsb
+death - segment_440.fsb
+hurt1 - segment_441.fsb
+hurt2 - segment_442.fsb
+remedy - segment_443.fsb
+unfect - segment_444.fsb
+say1 - segment_445.fsb
+say2 - segment_446.fsb
+step1 - segment_447.fsb
+step2 - segment_448.fsb
+step3 - segment_449.fsb
+wood1 - segment_450.fsb
+wood2 - segment_451.fsb
+wood3 - segment_452.fsb
+zpig1 - segment_453.fsb
+zpig2 - segment_454.fsb
+zpig3 - segment_455.fsb
+zpigangry1 - segment_456.fsb
+zpigangry2 - segment_457.fsb
+zpigangry3 - segment_458.fsb
+zpigdeath - segment_459.fsb
+zpighurt1 - segment_460.fsb
+zpighurt2 - segment_461.fsb
+say1 - segment_462.fsb
+say2 - segment_463.fsb
+say3 - segment_464.fsb
+death - segment_465.fsb
+hurt1 - segment_466.fsb
+hurt2 - segment_467.fsb
+bass - segment_468.fsb
+bassattack - segment_469.fsb
+bd - segment_470.fsb
+harp - segment_471.fsb
+hat - segment_472.fsb
+pling - segment_473.fsb
+snare - segment_474.fsb
+portal - segment_475.fsb
+anvil_break - segment_476.fsb
+anvil_land - segment_477.fsb
+anvil_use - segment_478.fsb
+bowhit1 - segment_479.fsb
+bowhit2 - segment_480.fsb
+bowhit3 - segment_481.fsb
+break - segment_482.fsb
+burp - segment_483.fsb
+chestclosed - segment_484.fsb
+chestopen - segment_485.fsb
+close - segment_486.fsb
+open - segment_487.fsb
+click - segment_488.fsb
+door_close - segment_489.fsb
+door_open - segment_490.fsb
+drink - segment_491.fsb
+eat1 - segment_492.fsb
+eat2 - segment_493.fsb
+eat3 - segment_494.fsb
+fizz - segment_495.fsb
+fuse - segment_496.fsb
+glass1 - segment_497.fsb
+glass2 - segment_498.fsb
+glass3 - segment_499.fsb
+levelup - segment_500.fsb
+orb - segment_501.fsb
+pop - segment_502.fsb
+pop2 - segment_503.fsb
+swim1 - segment_504.fsb
+swim3 - segment_505.fsb
+swim4 - segment_506.fsb
+hurt - segment_507.fsb
+toast - segment_508.fsb
+use_totem - segment_509.fsb
+camera1 - segment_510.fsb
+camera2 - segment_511.fsb
+camera3 - segment_512.fsb
+ladder1 - segment_513.fsb
+ladder2 - segment_514.fsb
+ladder3 - segment_515.fsb
+cloth1 - segment_516.fsb
+cloth2 - segment_517.fsb
+cloth3 - segment_518.fsb
+grass1 - segment_519.fsb
+grass2 - segment_520.fsb
+grass3 - segment_521.fsb
+gravel1 - segment_522.fsb
+gravel2 - segment_523.fsb
+gravel3 - segment_524.fsb
+sand1 - segment_525.fsb
+sand2 - segment_526.fsb
+sand3 - segment_527.fsb
+snow1 - segment_528.fsb
+snow2 - segment_529.fsb
+snow3 - segment_530.fsb
+stone1 - segment_531.fsb
+stone2 - segment_532.fsb
+stone3 - segment_533.fsb
+wood1 - segment_534.fsb
+wood2 - segment_535.fsb
+wood3 - segment_536.fsb
+cloth1 - segment_537.fsb
+cloth2 - segment_538.fsb
+cloth3 - segment_539.fsb
+grass1 - segment_540.fsb
+grass2 - segment_541.fsb
+grass3 - segment_542.fsb
+gravel1 - segment_543.fsb
+gravel2 - segment_544.fsb
+gravel3 - segment_545.fsb
+sand1 - segment_546.fsb
+sand2 - segment_547.fsb
+sand3 - segment_548.fsb
+snow1 - segment_549.fsb
+snow2 - segment_550.fsb
+snow3 - segment_551.fsb
+stone1 - segment_552.fsb
+stone2 - segment_553.fsb
+stone3 - segment_554.fsb
+wood1 - segment_555.fsb
+wood2 - segment_556.fsb
+wood3 - segment_557.fsb
 ```

@@ -1,6 +1,6 @@
 import os, sys, re, urllib.request, time, zipfile, io, winsound, shutil, struct
 from tkinter import messagebox
-VERSION = 2.3
+VERSION = 2.4
 
 try:
     import requests
@@ -228,9 +228,15 @@ def formatsToWave():
         newFile = fileToConvert.replace('.flv','.wav')
         newFile = os.path.basename(newFile)
         os.system(f'.\\extrcd\\mpg\\bin\\ffmpeg.exe -y -loglevel quiet -i {fileToConvert} {os.path.dirname(__file__)}\\{newFile}')
-
-    print("\n\nConversion Completed.\n")
-
+    if '.dsp' in fileToConvert:
+        newFile = fileToConvert.replace('.dsp', '.wav')
+        newFile = os.path.basename(newFile)
+        os.system(f".\\extrcd\\gcadpcm\\cvt.exe -o {newFile} {fileToConvert}")
+    if '.fsb' in fileToConvert:
+        newFile = fileToConvert.replace('.fsb', '.wav')
+        newFile = os.path.basename(newFile)
+        os.system(f".\\extrcd\\gcadpcm\\cvt.exe -o {newFile} {fileToConvert}")
+    print("\nConversion Completed.")
 
 def info_help():
     print(f"""\n
@@ -245,7 +251,7 @@ THIS IS A COMMAND LINE TOOL! YOU MUST USE POWERSHELL (or) CMD PROMPT TO USE.
        --ap,   add-padding    [OriginalFilePATH]       [ModifiedFilePATH]    > Adds padding to set the Modified File Equal to the Original File Size.
        --ne,   name-extract   [CombinedAudioPATH]      [Sound Name/ID]       > Extracts a FSB Soundbank File from the CombinedAudio.bin Archive via Name/SoundID.
        --ra,   rename-all     [SegmentFolderPATH]                            > Renames all Segment Files back to their original FSB Soundbank Filename(s).
-       --gsid, get-soundid    [CombinedAudioPATH]                            > Gets all Sound Names/ID's and Dumps them to a *.txt File.
+       --gsid, get-soundid    [CombinedAudioPATH]                            > Gets all Sound Names/ID's and Segment File and Dumps them to a *.txt File.
        --gssg, get-size-seg   [SegmentFilePATH]                              > Gets the size of a specific Segment Soundbank FSB File.
        --gs,   get-size       [SegmentOutFolderPATH]                         > Gets the size of all Segment Soundbank FSB Files.
        --exa,  extract-seg    [SegmentFilePATH]                              > Attempts to extract Audio from Segment Soundbank FSB Files.
@@ -265,6 +271,7 @@ THIS IS A COMMAND LINE TOOL! YOU MUST USE POWERSHELL (or) CMD PROMPT TO USE.
     os.system('pause')
 
 def getSoundId():
+    i = 0; a = 0
     filename = sys.argv[2]
     with open(filename, "rb") as file:
         data = file.read()
@@ -293,8 +300,12 @@ def getSoundId():
                 string_end = data.find(null_byte, string_start)
                 if string_end != -1:
                     extracted_string = data[string_start:string_end].decode('utf-8', errors='replace')
+                    if extracted_string == '':
+                        extracted_string = f'NULL_{a}'
+                        a += 1
                     print(f"Extracted string: {extracted_string}")
-                    f.write(f"{extracted_string}\n")
+                    f.write(f"{extracted_string} - segment_{i}.fsb\n")
+                    i += 1
 
 def renameSegments():
     directory = sys.argv[2]
@@ -453,7 +464,7 @@ def gcadpcmAudio():
     os.system(f'.\\extrcd\\gcadpcm\\cvt.exe -o .\\{fileF_0}_{segmentName}.wav {audio_file}')
 
 def convertAudioGcadpcm():
-    originalFile = sys.argv[2] # Required because it's used in find_segment_name()
+    originalFile = sys.argv[2]
     file2Convert = sys.argv[3]
     originalFileName = find_segment_name()
     if '.wav' not in file2Convert and '.wave' not in file2Convert:
@@ -644,11 +655,14 @@ def count_specific_bytes():
     return sixCount, twoCount, celtCount, fmodCount, oneCount, interleavedFormat
 
 def getMetaData():
+    answer = ""
     combinedAudiof = sys.argv[2]
     backupFile = f".\\extrcd\\def_aud.bin"
     searchStr = b'FSB5'
     count = 0
     with open(combinedAudiof, 'rb') as file:
+        header0 = file.read(0x1A2C)
+        file.seek(0x1A2C)
         data0 = file.read()
         count = data0.count(searchStr)
         file.seek(0x00)
@@ -658,10 +672,18 @@ def getMetaData():
         lngth = len(data0[:position])
 
     with open(backupFile,'rb') as f1:
+        header1 = f1.read(0x1A2C)
+        f1.seek(0x1A2C)
         data1 = f1.read()
 
-    if data0 != data1:
-        answer = 'Yes'
+    if header0 != header1 and data0 != data1:
+        answer = "Yes (Header and SFX where Changed)"
+    elif header0 != header1 and data0 == data1:
+        answer = "Yes (Header was Changed)"
+    elif data0 != data1 and header0 == header1:
+        answer = 'Yes (SFX was Changed)'
+    elif os.path.basename(combinedAudiof) != 'CombinedAudio.bin' and "Yes" not in answer:
+        answer = "Yes (Filename Changed)"
     else:
         answer = "No"
 

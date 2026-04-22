@@ -1,22 +1,18 @@
-import io
-import json
-import os
-import struct
-import shutil
-import subprocess
-import sys
-import tempfile
-import traceback
-import wave
+import io, json, os, atexit, threading, struct, subprocess
+import tempfile, traceback, wave, copy, shutil, sys
+from tkinter import ttk, filedialog, messagebox
 from dataclasses import dataclass
-
-import numpy as np
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+import numpy as np
 
-APP_TITLE = "CATool GUI"
-APP_VERSION = "2.5"
+try:
+    import winsound
+except Exception:
+    winsound = None
+
+APP_TITLE = "Cracko298's CATool GUI"
+APP_VERSION = "2.5.0"
 DSP_HEADER_SIZE = 0x60
 COMBINED_AUDIO_HEADER_SIZE = 0x1A2C
 COMBINED_AUDIO_ALIGNMENT = 0x20
@@ -48,9 +44,9 @@ class DspHeader:
 class CombinedAudioEntry:
     table_index: int
     sound_id: int
-    offset: int  # stored table offset, relative to the start of the FSB data region
+    offset: int
     size: int
-    end_offset: int  # stored relative end offset
+    end_offset: int
     absolute_offset: int = 0
     absolute_end_offset: int = 0
     physical_index: int = -1
@@ -138,8 +134,6 @@ class CAToolBackend:
         raw_header = h1["raw_header"]
         data_offset = DSP_HEADER_SIZE
 
-        # Standard stereo DSPs commonly store a second full 0x60-byte header at 0x60,
-        # followed by the interleaved ADPCM payload at 0xC0.
         if len(data) >= DSP_HEADER_SIZE * 2:
             try:
                 h2 = self._parse_single_dsp_header(data[DSP_HEADER_SIZE:DSP_HEADER_SIZE * 2])
@@ -510,17 +504,6 @@ class CAToolBackend:
         found_loop = False
         found_dspcoeff = False
 
-        # FSB5 stores the packed sample header as one 64-bit little-endian value.
-        # Layout from fsb5_spec.c:
-        #   bits 63..34 = num_samples (30 bits)
-        #   bits 33..7  = data offset within data section, in 0x20-byte units (27 bits incl. shift)
-        #   bits 7..6   = default channel code
-        #   bits 5..1   = default sample-rate code
-        #   bit 0       = has extra chunks
-        #
-        # The previous build incorrectly overwrote the low 30 bits of word2, but num_samples
-        # actually lives in the high 30 bits of the 64-bit value. That leaves the template's
-        # original duration in place, which is why playback stopped at the template length.
         sample_mode = struct.unpack_from("<Q", sample_header, 0)[0]
         sample_mode = (sample_mode & ((1 << 34) - 1)) | ((dsp.sample_count & 0x3FFFFFFF) << 34)
         struct.pack_into("<Q", sample_header, 0, sample_mode)
@@ -537,7 +520,6 @@ class CAToolBackend:
                 struct.pack_into("<I", sample_header, cstart, dsp.sample_rate)
                 found_freq = True
             elif ctype == 3 and csize == 8:
-                # DSP loop values are nibble offsets, but FSB loop info stores samples.
                 loop_start_samples = max(0, (dsp.loop_start - 2) // 8 * 14)
                 loop_end_samples = max(0, ((dsp.loop_end - 2) // 8 * 14) + 1)
                 struct.pack_into("<II", sample_header, cstart, loop_start_samples, loop_end_samples)
@@ -556,7 +538,6 @@ class CAToolBackend:
                 sample_header[cstart:cend] = dsp.coeff_blob
                 found_dspcoeff = True
 
-        # If there is no explicit channel chunk, the packed header bits must already match.
         if not found_channels and meta["channels"] != dsp.channels:
             raise ToolError(
                 f"Template FSB is {meta['channels']} channel(s), but DSP is {dsp.channels} channel(s). "
@@ -570,13 +551,10 @@ class CAToolBackend:
         if dsp.loop_flag and not found_loop:
             raise ToolError("DSP is looped, but template FSB does not contain a LOOP chunk.")
 
-        # Write back modified sample header.
         blob[meta["sample_header_off"]:meta["sample_header_off"] + meta["sample_header_size"]] = sample_header
 
-        # Update file-level data size.
         struct.pack_into("<I", blob, 0x14, len(payload))
 
-        # Replace sample data area.
         rebuilt = bytes(blob[:meta["data_off"]]) + payload
         Path(out_path).write_bytes(rebuilt)
         return Path(out_path)
@@ -921,11 +899,385 @@ class CAToolBackend:
             "chunks": chunks,
         }
 
-    def decode_to_wav(self, in_path: Path, out_path: Path):
-        self.ensure_exists(self.cvt_exe, "Converter")
+    def _dsp_nibble_to_signed(self, nibble: int) -> int:
+        return nibble - 16 if nibble & 0x8 else nibble
+
+    def _decode_dsp_channel_bytes(self, payload: bytes, sample_count: int, coeff_pairs, hist1: int = 0, hist2: int = 0) -> np.ndarray:
+        out = np.zeros(sample_count, dtype=np.int16)
+        out_index = 0
+        pos = 0
+        while out_index < sample_count and pos + 8 <= len(payload):
+            header = payload[pos]
+            pos += 1
+            pred_idx = (header >> 4) & 0x0F
+            scale_shift = header & 0x0F
+            if pred_idx >= len(coeff_pairs):
+                pred_idx = 0
+            coef1, coef2 = coeff_pairs[pred_idx]
+            data = payload[pos:pos + 7]
+            pos += 7
+            nibbles = []
+            for byte_value in data:
+                nibbles.append(self._dsp_nibble_to_signed((byte_value >> 4) & 0x0F))
+                nibbles.append(self._dsp_nibble_to_signed(byte_value & 0x0F))
+            for nibble in nibbles:
+                if out_index >= sample_count:
+                    break
+                sample = self._decode_dsp_sample(nibble, scale_shift, coef1, coef2, hist1, hist2)
+                out[out_index] = sample
+                hist2, hist1 = hist1, sample
+                out_index += 1
+        return out
+
+    def _coeff_blob_to_pairs(self, coeff_blob: bytes, channels: int):
+        per_channel = 16 * 2
+        if len(coeff_blob) not in (46, 92) and len(coeff_blob) < channels * per_channel:
+            raise ToolError(f"Unsupported DSP coefficient blob size: {len(coeff_blob)}")
+        pairs_by_channel = []
+        for ch in range(channels):
+            start = ch * 46 if len(coeff_blob) >= (ch + 1) * 46 else ch * per_channel
+            chunk = coeff_blob[start:start + 46]
+            if len(chunk) < per_channel:
+                raise ToolError('DSP coefficient blob is too small for the reported channel count.')
+            pairs = [struct.unpack_from('>hh', chunk, i * 4) for i in range(8)]
+            pairs_by_channel.append(pairs)
+        return pairs_by_channel
+
+    def _wav_bytes_from_pcm16(self, pcm: np.ndarray, sample_rate: int) -> bytes:
+        if pcm.ndim == 1:
+            channels = 1
+            frame_bytes = pcm.astype('<i2').tobytes()
+        else:
+            channels = pcm.shape[1]
+            frame_bytes = pcm.astype('<i2').tobytes()
+        bio = io.BytesIO()
+        with wave.open(bio, 'wb') as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(frame_bytes)
+        return bio.getvalue()
+
+    def _wav_bytes_from_pcm8(self, pcm: bytes, sample_rate: int, channels: int) -> bytes:
+        bio = io.BytesIO()
+        with wave.open(bio, 'wb') as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(1)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm)
+        return bio.getvalue()
+
+    def _extract_fsb_sample_metadata(self, fsb_bytes: bytes):
+        meta = self._parse_fsb_header(fsb_bytes)
+        sample_mode = struct.unpack_from('<Q', meta['sample_header'], 0)[0]
+        sample_count = (sample_mode >> 34) & 0x3FFFFFFF
+        channels = meta['channels']
+        sample_rate = None
+        for chunk in self._iter_sample_chunks(meta['sample_header']):
+            ctype = chunk['type']
+            cstart = chunk['data_offset']
+            if ctype == 1 and chunk['size'] >= 1:
+                channels = meta['sample_header'][cstart]
+            elif ctype == 2 and chunk['size'] == 4:
+                sample_rate = struct.unpack_from('<I', meta['sample_header'], cstart)[0]
+        if sample_count <= 0:
+            raise ToolError('FSB sample count is invalid or missing.')
+        if sample_rate is None or sample_rate <= 0:
+            raise ToolError('FSB frequency chunk is missing or invalid.')
+        payload = fsb_bytes[meta['data_off']:meta['data_off'] + meta['data_size']]
+        if len(payload) < meta['data_size']:
+            raise ToolError('FSB payload is truncated.')
+        return {
+            'mode': meta['mode'],
+            'sample_count': sample_count,
+            'sample_rate': sample_rate,
+            'channels': channels,
+            'payload': payload,
+            'meta': meta,
+        }
+
+    def _decode_fadpcm_channel_bytes(self, channel_payload: bytes, sample_count: int) -> np.ndarray:
+        frame_size = 0x8C
+        samples_per_frame = (frame_size - 0x0C) * 2
+        out = np.zeros(sample_count, dtype=np.int16)
+        out_index = 0
+        coef_table = (
+            (0, 0),
+            (60, 0),
+            (122, 60),
+            (115, 52),
+            (98, 55),
+            (0, 0),
+            (0, 0),
+            (0, 0),
+        )
+        for frame_pos in range(0, len(channel_payload), frame_size):
+            if out_index >= sample_count:
+                break
+            frame = channel_payload[frame_pos:frame_pos + frame_size]
+            if len(frame) < frame_size:
+                break
+            coefs = struct.unpack_from('<I', frame, 0x00)[0]
+            shifts = struct.unpack_from('<I', frame, 0x04)[0]
+            hist1 = struct.unpack_from('<h', frame, 0x08)[0]
+            hist2 = struct.unpack_from('<h', frame, 0x0A)[0]
+            for i in range(8):
+                index = ((coefs >> (i * 4)) & 0x0F) % 0x07
+                shift = (shifts >> (i * 4)) & 0x0F
+                coef1, coef2 = coef_table[index]
+                shift = 22 - shift
+                for j in range(4):
+                    nibbles = struct.unpack_from('<I', frame, 0x0C + (0x10 * i) + (0x04 * j))[0]
+                    for k in range(8):
+                        if out_index >= sample_count:
+                            break
+                        sample = (nibbles >> (k * 4)) & 0x0F
+                        sample = (sample << 28) & 0xFFFFFFFF
+                        if sample & 0x80000000:
+                            sample -= 0x100000000
+                        sample = sample >> shift
+                        sample = (sample - hist2 * coef2 + hist1 * coef1) >> 6
+                        sample = self._dsp_clamp16(sample)
+                        out[out_index] = sample
+                        out_index += 1
+                        hist2, hist1 = hist1, sample
+                    if out_index >= sample_count:
+                        break
+                if out_index >= sample_count:
+                    break
+        return out
+
+    def _decode_fadpcm_fsb_to_wav_bytes(self, fsb_bytes: bytes) -> bytes:
+        info = self._extract_fsb_sample_metadata(fsb_bytes)
+        channels = info['channels']
+        sample_rate = info['sample_rate']
+        sample_count = info['sample_count']
+        payload = info['payload']
+        frame_size = 0x8C
+        samples_per_frame = (frame_size - 0x0C) * 2
+        frames_per_channel = (sample_count + samples_per_frame - 1) // samples_per_frame
+        if channels < 1:
+            raise ToolError('FADPCM channel count is invalid.')
+        expected_min = frames_per_channel * frame_size * channels
+        if len(payload) < min(expected_min, frame_size * channels):
+            raise ToolError('FADPCM payload is too small for the reported sample count/channels.')
+        if channels == 1:
+            pcm = self._decode_fadpcm_channel_bytes(payload, sample_count)
+            return self._wav_bytes_from_pcm16(pcm, sample_rate)
+        if channels == 2:
+            left_parts = []
+            right_parts = []
+            for frame_index in range(frames_per_channel):
+                base = frame_index * frame_size * 2
+                left_parts.append(payload[base:base + frame_size])
+                right_parts.append(payload[base + frame_size:base + (frame_size * 2)])
+            left_pcm = self._decode_fadpcm_channel_bytes(b''.join(left_parts), sample_count)
+            right_pcm = self._decode_fadpcm_channel_bytes(b''.join(right_parts), sample_count)
+            stereo = np.column_stack((left_pcm, right_pcm))
+            return self._wav_bytes_from_pcm16(stereo, sample_rate)
+        raise ToolError(f'Only mono and stereo FADPCM FSB files are supported right now. Found {channels} channels.')
+
+    def _decode_pcm_fsb_to_wav_bytes(self, fsb_bytes: bytes) -> bytes:
+        info = self._extract_fsb_sample_metadata(fsb_bytes)
+        mode = info['mode']
+        channels = info['channels']
+        sample_rate = info['sample_rate']
+        payload = info['payload']
+        sample_count = info['sample_count']
+        if mode == 1:
+            expected = sample_count * channels
+            return self._wav_bytes_from_pcm8(payload[:expected], sample_rate, channels)
+        if mode == 2:
+            expected = sample_count * channels * 2
+            pcm = payload[:expected]
+            return self._wav_bytes_from_pcm16(np.frombuffer(pcm, dtype='<i2').reshape(-1, channels) if channels > 1 else np.frombuffer(pcm, dtype='<i2'), sample_rate)
+        if mode == 16:
+            return self._decode_fadpcm_fsb_to_wav_bytes(fsb_bytes)
+        raise ToolError(f'Unsupported PCM-like FSB mode: {mode}')
+
+    def decode_dsp_bytes_to_wav_bytes(self, dsp_bytes: bytes) -> bytes:
+        if len(dsp_bytes) < DSP_HEADER_SIZE:
+            raise ToolError('DSP data is smaller than the required 0x60-byte header.')
+        h1 = self._parse_single_dsp_header(dsp_bytes[:DSP_HEADER_SIZE])
+        channels = 1
+        data_offset = DSP_HEADER_SIZE
+        coeff_blobs = [h1['raw_header'][0x1C:0x4A]]
+        initial_states = [(struct.unpack_from('>h', h1['raw_header'], 0x40)[0], struct.unpack_from('>h', h1['raw_header'], 0x42)[0])]
+        if len(dsp_bytes) >= DSP_HEADER_SIZE * 2:
+            try:
+                h2 = self._parse_single_dsp_header(dsp_bytes[DSP_HEADER_SIZE:DSP_HEADER_SIZE * 2])
+            except ToolError:
+                h2 = None
+            if h2 and all(h1[k] == h2[k] for k in ('sample_count', 'nibble_count', 'sample_rate', 'loop_flag', 'fmt')):
+                channels = 2
+                data_offset = DSP_HEADER_SIZE * 2
+                coeff_blobs.append(h2['raw_header'][0x1C:0x4A])
+                initial_states.append((struct.unpack_from('>h', h2['raw_header'], 0x40)[0], struct.unpack_from('>h', h2['raw_header'], 0x42)[0]))
+        sample_count = h1['sample_count']
+        sample_rate = h1['sample_rate']
+        payload = dsp_bytes[data_offset:]
+        frame_count = (sample_count + 13) // 14
+        ch_payload_size = frame_count * 8
+        pairs_by_channel = [self._coeff_blob_to_pairs(blob, 1)[0] for blob in coeff_blobs]
+        if channels == 1:
+            pcm = self._decode_dsp_channel_bytes(payload[:ch_payload_size], sample_count, pairs_by_channel[0], *initial_states[0])
+            return self._wav_bytes_from_pcm16(pcm, sample_rate)
+        left_parts = []
+        right_parts = []
+        for pos in range(0, len(payload), 16):
+            left_parts.append(payload[pos:pos + 8])
+            right_parts.append(payload[pos + 8:pos + 16])
+        left_payload = b''.join(left_parts)[:ch_payload_size]
+        right_payload = b''.join(right_parts)[:ch_payload_size]
+        left_pcm = self._decode_dsp_channel_bytes(left_payload, sample_count, pairs_by_channel[0], *initial_states[0])
+        right_pcm = self._decode_dsp_channel_bytes(right_payload, sample_count, pairs_by_channel[1], *initial_states[1])
+        stereo = np.column_stack((left_pcm, right_pcm))
+        return self._wav_bytes_from_pcm16(stereo, sample_rate)
+
+    def _extract_fsb_decode_info(self, fsb_bytes: bytes):
+        info = self._extract_fsb_sample_metadata(fsb_bytes)
+        if info['mode'] != 6:
+            raise ToolError(f"Only GCADPCM FSB files are supported by this decoder path. Found mode {info['mode']}.")
+        coeff_blob = None
+        meta = info['meta']
+        for chunk in self._iter_sample_chunks(meta['sample_header']):
+            ctype = chunk['type']
+            cstart = chunk['data_offset']
+            cend = chunk['data_end']
+            if ctype == 7:
+                coeff_blob = bytes(meta['sample_header'][cstart:cend])
+        if coeff_blob is None:
+            raise ToolError('FSB DSPCOEFF chunk is missing.')
+        return {
+            'sample_count': info['sample_count'],
+            'sample_rate': info['sample_rate'],
+            'channels': info['channels'],
+            'coeff_blob': coeff_blob,
+            'payload': info['payload'],
+        }
+
+    def decode_fsb_bytes_to_wav_bytes(self, fsb_bytes: bytes) -> bytes:
+        if not fsb_bytes or fsb_bytes[:4] != b"FSB5":
+            raise ToolError("Selected CombinedAudio entry is not a valid FSB5 segment.")
+        meta = self._parse_fsb_header(fsb_bytes)
+        if meta['mode'] in (1, 2, 16):
+            return self._decode_pcm_fsb_to_wav_bytes(fsb_bytes)
+        info = self._extract_fsb_decode_info(fsb_bytes)
+        sample_count = info['sample_count']
+        sample_rate = info['sample_rate']
+        channels = info['channels']
+        payload = info['payload']
+        pairs_by_channel = self._coeff_blob_to_pairs(info['coeff_blob'], channels)
+        frame_count = (sample_count + 13) // 14
+        ch_payload_size = frame_count * 8
+        if channels == 1:
+            pcm = self._decode_dsp_channel_bytes(payload[:ch_payload_size], sample_count, pairs_by_channel[0])
+            return self._wav_bytes_from_pcm16(pcm, sample_rate)
+        if channels != 2:
+            raise ToolError(f'Only mono and stereo GCADPCM FSB files are supported right now. Found {channels} channels.')
+        left_parts = []
+        right_parts = []
+        for pos in range(0, len(payload), 16):
+            left_parts.append(payload[pos:pos + 8])
+            right_parts.append(payload[pos + 8:pos + 16])
+        left_payload = b''.join(left_parts)[:ch_payload_size]
+        right_payload = b''.join(right_parts)[:ch_payload_size]
+        left_pcm = self._decode_dsp_channel_bytes(left_payload, sample_count, pairs_by_channel[0])
+        right_pcm = self._decode_dsp_channel_bytes(right_payload, sample_count, pairs_by_channel[1])
+        stereo = np.column_stack((left_pcm, right_pcm))
+        return self._wav_bytes_from_pcm16(stereo, sample_rate)
+
+    def decode_audio_to_wav_bytes(self, in_path: Path) -> bytes:
         self.ensure_exists(in_path)
-        self.run_process([str(self.cvt_exe), "-o", str(out_path), str(in_path)])
-        return out_path
+        suffix = in_path.suffix.lower()
+        data = in_path.read_bytes()
+        if suffix == '.dsp':
+            return self.decode_dsp_bytes_to_wav_bytes(data)
+        if suffix == '.fsb':
+            return self.decode_fsb_bytes_to_wav_bytes(data)
+        if data[:4] == b'FSB5':
+            return self.decode_fsb_bytes_to_wav_bytes(data)
+        return self.decode_dsp_bytes_to_wav_bytes(data)
+
+    def save_decoded_audio_to_wav(self, in_path: Path, out_path: Path):
+        wav_bytes = self.decode_audio_to_wav_bytes(in_path)
+        Path(out_path).write_bytes(wav_bytes)
+        return Path(out_path)
+
+    def _replace_combined_audio_entry_blob(self, combined_audio_path: Path, table_index: int, new_blob: bytes, output_path: Path = None):
+        parsed = self.parse_combined_audio_table(combined_audio_path)
+        if table_index < 0 or table_index >= len(parsed['entries']):
+            raise ToolError(f'CombinedAudio table index out of range: {table_index}')
+        if not new_blob.startswith(b'FSB5'):
+            raise ToolError('Replacement data must be an FSB5 blob.')
+        output_path = Path(output_path or combined_audio_path)
+        physical_entries = list(parsed['entries_by_physical'])
+        replacement_map = {entry.table_index: parsed['data'][entry.absolute_offset:entry.absolute_end_offset] for entry in parsed['entries']}
+        replacement_map[table_index] = new_blob
+        entries = [None] * parsed['entry_count']
+        data_chunks = []
+        current_offset = 0
+        for entry in physical_entries:
+            blob = replacement_map[entry.table_index]
+            current_offset = self._align_up(current_offset)
+            entries[entry.table_index] = (entry.sound_id, current_offset, len(blob))
+            data_chunks.append((current_offset, blob))
+            current_offset += len(blob)
+        header = bytearray(4 + (parsed['entry_count'] * 12))
+        struct.pack_into('<I', header, 0, parsed['entry_count'])
+        for idx, packed in enumerate(entries):
+            sound_id, fsb_offset, fsb_size = packed
+            struct.pack_into('<III', header, 4 + (idx * 12), sound_id, fsb_offset, fsb_size)
+        out = bytearray(header)
+        header_length = len(header)
+        for fsb_offset, blob in data_chunks:
+            absolute_offset = header_length + fsb_offset
+            if len(out) < absolute_offset:
+                out.extend(b'\x00' * (absolute_offset - len(out)))
+            out.extend(blob)
+        output_path.write_bytes(bytes(out))
+        return output_path
+
+    def build_replacement_fsb_from_source(self, template_fsb_bytes: bytes, replacement_path: Path) -> bytes:
+        self.ensure_exists(replacement_path)
+        suffix = replacement_path.suffix.lower()
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            template_path = td_path / 'template.fsb'
+            template_path.write_bytes(template_fsb_bytes)
+            if suffix == '.fsb':
+                blob = replacement_path.read_bytes()
+                if not blob.startswith(b'FSB5'):
+                    raise ToolError('Selected replacement FSB is not a valid FSB5 file.')
+                return blob
+            if suffix in ('.wav', '.wave'):
+                out_fsb = td_path / 'replacement.fsb'
+                self.wrap_wav_into_fsb_auto(template_path, replacement_path, out_fsb)
+                return out_fsb.read_bytes()
+            if suffix == '.dsp':
+                out_fsb = td_path / 'replacement.fsb'
+                self.wrap_dsp_into_fsb(template_path, replacement_path, out_fsb)
+                return out_fsb.read_bytes()
+            raise ToolError('Replacement file must be .fsb, .wav, .wave, or .dsp')
+
+    def replace_combined_audio_entry_from_file(self, combined_audio_path: Path, table_index: int, replacement_path: Path, output_path: Path = None):
+        template_fsb = self.get_combined_audio_entry_fsb_bytes(combined_audio_path, table_index)
+        new_blob = self.build_replacement_fsb_from_source(template_fsb, replacement_path)
+        return self._replace_combined_audio_entry_blob(combined_audio_path, table_index, new_blob, output_path=output_path)
+
+    def get_combined_audio_entry_fsb_bytes(self, combined_audio_path: Path, table_index: int) -> bytes:
+        parsed = self.parse_combined_audio_table(combined_audio_path)
+        if table_index < 0 or table_index >= len(parsed['entries']):
+            raise ToolError(f"CombinedAudio table index out of range: {table_index}")
+        entry = parsed['entries'][table_index]
+        return parsed['data'][entry.absolute_offset:entry.absolute_end_offset]
+
+    def get_combined_audio_entry_wav_bytes(self, combined_audio_path: Path, table_index: int) -> bytes:
+        fsb_bytes = self.get_combined_audio_entry_fsb_bytes(combined_audio_path, table_index)
+        return self.decode_fsb_bytes_to_wav_bytes(fsb_bytes)
+
+    def decode_to_wav(self, in_path: Path, out_path: Path):
+        return self.save_decoded_audio_to_wav(in_path, out_path)
 
     def encode_wav_to_dsp(self, wav_path: Path, out_path: Path):
         self.ensure_exists(wav_path)
@@ -1004,10 +1356,10 @@ class CAToolGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.backend = CAToolBackend()
+        self._current_wav_bytes = None
         self.title(f"{APP_TITLE} v{APP_VERSION}")
-        self.geometry("980x760")
-        self.minsize(900, 680)
         self._build_ui()
+        self._lock_startup_window_size()
 
     def _build_ui(self):
         root = ttk.Frame(self, padding=12)
@@ -1027,22 +1379,37 @@ class CAToolGUI(tk.Tk):
         self.logs.pack(fill="both", expand=False, pady=(10, 0))
         self.logs.configure(state="disabled")
 
-        tab_extract = ttk.Frame(notebook, padding=10)
-        tab_convert = ttk.Frame(notebook, padding=10)
-        tab_wrap = ttk.Frame(notebook, padding=10)
-        tab_info = ttk.Frame(notebook, padding=10)
-        tab_archive = ttk.Frame(notebook, padding=10)
+        tab_extract = ttk.Frame(notebook, padding=20)
+        tab_convert = ttk.Frame(notebook, padding=20)
+        tab_wrap = ttk.Frame(notebook, padding=20)
+        tab_info = ttk.Frame(notebook, padding=20)
+        tab_archive = ttk.Frame(notebook, padding=20)
+        notebook.add(tab_archive, text="CombinedAudio Table/Editor")
         notebook.add(tab_extract, text="Extract / Rebuild")
+        notebook.add(tab_wrap, text="WAV/DSP → FSB")
         notebook.add(tab_convert, text="Convert")
-        notebook.add(tab_wrap, text="DSP → FSB")
         notebook.add(tab_info, text="Inspect")
-        notebook.add(tab_archive, text="CombinedAudio Table")
+        
 
         self._build_extract_tab(tab_extract)
         self._build_convert_tab(tab_convert)
         self._build_wrap_tab(tab_wrap)
         self._build_info_tab(tab_info)
         self._build_archive_tab(tab_archive)
+
+    def _lock_startup_window_size(self):
+        width, height = 1700, 1000
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        width = min(width, max(1000, screen_w - 80))
+        height = min(height, max(720, screen_h - 80))
+        x = max(0, (screen_w - width) // 2)
+        y = max(0, (screen_h - height) // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        self.minsize(width, height)
+        self.maxsize(width, height)
+        self.resizable(False, False)
 
     def log(self, text: str):
         self.logs.configure(state="normal")
@@ -1157,14 +1524,20 @@ class CAToolGUI(tk.Tk):
 
     def _build_archive_tab(self, tab):
         tab.columnconfigure(1, weight=1)
-        tab.rowconfigure(2, weight=1)
+        tab.rowconfigure(3, weight=1)
         self.archive_path = tk.StringVar()
+        self.archive_out_path = tk.StringVar()
         self.add_path_row(tab, 0, 'CombinedAudio.bin', self.archive_path, filetypes=(("BIN Files", "*.bin"), ("All Files", "*.*")))
+        self.add_path_row(tab, 1, 'Replacement output (.bin, optional)', self.archive_out_path, filetypes=(("BIN Files", "*.bin"),), save=True, default_ext='.bin')
         btns = ttk.Frame(tab)
-        btns.grid(row=1, column=0, columnspan=3, sticky='w', pady=(4, 8))
-        ttk.Button(btns, text='Load CombinedAudio table', command=lambda: self.run_action('CombinedAudio Table', self._load_archive_table)).pack(side='left')
-        ttk.Button(btns, text='Copy selected row', command=self._copy_archive_row).pack(side='left', padx=(8, 0))
-        ttk.Button(btns, text='Copy all rows as TSV', command=self._copy_all_archive_rows).pack(side='left', padx=(8, 0))
+        btns.grid(row=2, column=0, columnspan=3, sticky='w', pady=(4, 8))
+        ttk.Button(btns, text='Load CombinedAudio Table', command=lambda: self.run_action('CombinedAudio Table', self._load_archive_table)).pack(side='left')
+        ttk.Button(btns, text='Play Selected FSB', command=lambda: self.run_action('Play Selected FSB', self._play_archive_selection)).pack(side='left', padx=(8, 0))
+        ttk.Button(btns, text='Stop Playback', command=lambda: self.run_action('Stop Playback', self._stop_playback)).pack(side='left', padx=(8, 0))
+        ttk.Button(btns, text='Replace Selected SFX', command=lambda: self.run_action('Replace Selected Sound', self._replace_archive_selection)).pack(side='left', padx=(8, 0))
+        ttk.Button(btns, text='Reload Table', command=lambda: self.run_action('Reload Table', self._reload_archive_table)).pack(side='left', padx=(8, 0))
+        ttk.Button(btns, text='Copy Selected', command=lambda: self.run_action('Copy Selected Row', self._copy_archive_row)).pack(side='middle', padx=(8, 0))
+        ttk.Button(btns, text='Copy all as TSV', command=lambda: self.run_action('Copy All Rows', self._copy_all_archive_rows)).pack(side='middle', padx=(8, 0))
 
         columns = ('table_index', 'physical_index', 'sound_id', 'offset_hex', 'size', 'end_hex', 'fsb_name')
         self.archive_tree = ttk.Treeview(tab, columns=columns, show='headings', height=18)
@@ -1193,12 +1566,12 @@ class CAToolGUI(tk.Tk):
         yscroll = ttk.Scrollbar(tab, orient='vertical', command=self.archive_tree.yview)
         xscroll = ttk.Scrollbar(tab, orient='horizontal', command=self.archive_tree.xview)
         self.archive_tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
-        self.archive_tree.grid(row=2, column=0, columnspan=2, sticky='nsew')
-        yscroll.grid(row=2, column=2, sticky='ns')
-        xscroll.grid(row=3, column=0, columnspan=2, sticky='ew')
+        self.archive_tree.grid(row=3, column=0, columnspan=2, sticky='nsew')
+        yscroll.grid(row=3, column=2, sticky='ns')
+        xscroll.grid(row=4, column=0, columnspan=2, sticky='ew')
 
         self.archive_summary = tk.Text(tab, height=8, wrap='word')
-        self.archive_summary.grid(row=4, column=0, columnspan=3, sticky='ew', pady=(8, 0))
+        self.archive_summary.grid(row=5, column=0, columnspan=3, sticky='ew', pady=(8, 0))
         self.archive_summary.configure(state='disabled')
 
     def _set_archive_summary(self, text: str):
@@ -1252,6 +1625,72 @@ class CAToolGUI(tk.Tk):
         self.clipboard_clear()
         self.clipboard_append(text)
         return 'Copied all CombinedAudio rows to clipboard as TSV.'
+
+    def _get_selected_archive_table_index(self) -> int:
+        selected = self.archive_tree.selection()
+        if not selected:
+            raise ToolError('Select a row in the CombinedAudio Table tab first.')
+        values = self.archive_tree.item(selected[0], 'values')
+        if not values:
+            raise ToolError('Could not read the selected CombinedAudio row.')
+        return int(values[0])
+
+    def _cleanup_preview_temp(self):
+        temp_path = getattr(self, '_preview_temp_wav', None)
+        self._preview_temp_wav = None
+        if temp_path:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def _play_wav_bytes(self, wav_bytes: bytes):
+        if winsound is None:
+            raise ToolError('Playback is only available on Windows via winsound.')
+        if not wav_bytes:
+            raise ToolError('No WAV data was generated for playback.')
+        self._stop_playback(silent=True)
+        self._current_wav_bytes = wav_bytes
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+        try:
+            tmp.write(wav_bytes)
+            tmp.flush()
+        finally:
+            tmp.close()
+        self._preview_temp_wav = tmp.name
+        winsound.PlaySound(self._preview_temp_wav, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+
+    def _stop_playback(self, silent: bool = False):
+        if winsound is None:
+            raise ToolError('Playback stop is only available on Windows via winsound.')
+        winsound.PlaySound(None, 0)
+        self._current_wav_bytes = None
+        self._cleanup_preview_temp()
+        if not silent:
+            return 'Stopped audio playback.'
+
+    def _play_archive_selection(self):
+        combined_audio_path = Path(self.archive_path.get())
+        table_index = self._get_selected_archive_table_index()
+        wav_bytes = self.backend.get_combined_audio_entry_wav_bytes(combined_audio_path, table_index)
+        self._play_wav_bytes(wav_bytes)
+        return f'Playing CombinedAudio table entry #{table_index} from memory.'
+
+    def _reload_archive_table(self):
+        return self._load_archive_table()
+
+    def _replace_archive_selection(self):
+        combined_audio_path = Path(self.archive_path.get())
+        table_index = self._get_selected_archive_table_index()
+        replacement = filedialog.askopenfilename(filetypes=(("Supported Audio/FSB", "*.fsb *.wav *.wave *.dsp"), ("All Files", "*.*")))
+        if not replacement:
+            return 'Replacement canceled.'
+        output_text = self.archive_out_path.get().strip()
+        output_path = Path(output_text) if output_text else combined_audio_path
+        result = self.backend.replace_combined_audio_entry_from_file(combined_audio_path, table_index, Path(replacement), output_path=output_path)
+        self.archive_path.set(str(result))
+        self._load_archive_table()
+        return f'Replaced CombinedAudio table entry #{table_index} using {Path(replacement).name} and reloaded: {result}'
 
     def _extract_combined(self):
         count = self.backend.extract_combined_audio(Path(self.ca_path.get()), Path(self.extract_dir.get()))
@@ -1393,6 +1832,954 @@ class CAToolGUI(tk.Tk):
         )
         messagebox.showinfo("DSP Header", text)
         return text
+
+try:
+    import tkinterdnd2 as _tkdnd2
+except Exception:
+    _tkdnd2 = None
+
+def _ca_chunk_header(chunk_type: int, size: int, next_flag: int) -> bytes:
+    raw = (next_flag & 0x1) | ((size & 0xFFFFFF) << 1) | ((chunk_type & 0x7F) << 25)
+    return struct.pack('<I', raw)
+
+
+def _ca_seconds_to_samples(seconds: float, sample_rate: int) -> int:
+    return max(0, int(round(float(seconds) * float(sample_rate))))
+
+
+def _backend_inspect_wav_bytes(self, wav_bytes: bytes):
+    if not wav_bytes:
+        raise ToolError('No WAV data was provided.')
+    with wave.open(io.BytesIO(wav_bytes), 'rb') as wf:
+        channels = wf.getnchannels()
+        sample_width = wf.getsampwidth()
+        sample_rate = wf.getframerate()
+        frame_count = wf.getnframes()
+        raw = wf.readframes(frame_count)
+    duration = (frame_count / sample_rate) if sample_rate else 0.0
+    pcm = np.frombuffer(raw, dtype='<i2') if sample_width == 2 else np.frombuffer(raw, dtype=np.uint8)
+    if sample_width == 2 and channels > 1:
+        pcm = pcm.reshape(-1, channels)
+    peak = 0.0
+    if sample_width == 2 and pcm.size:
+        peak = float(np.max(np.abs(pcm.astype(np.int32)))) / 32767.0
+    return {
+        'kind': 'wav',
+        'channels': channels,
+        'sample_width': sample_width,
+        'sample_rate': sample_rate,
+        'sample_count': frame_count,
+        'duration': duration,
+        'pcm': pcm,
+        'peak': peak,
+    }
+
+
+def _backend_inspect_fsb_bytes_detailed(self, fsb_bytes: bytes):
+    info = self._extract_fsb_sample_metadata(fsb_bytes)
+    mode_names = {1: 'PCM8', 2: 'PCM16', 6: 'GCADPCM', 16: 'FADPCM'}
+    loop_start = None
+    loop_end = None
+    embedded_name = self.get_segment_name_bytes(fsb_bytes)
+    for chunk in self._iter_sample_chunks(info['meta']['sample_header']):
+        if chunk['type'] == 3 and chunk['size'] == 8:
+            loop_start, loop_end = struct.unpack_from('<II', info['meta']['sample_header'], chunk['data_offset'])
+            break
+    duration = (info['sample_count'] / info['sample_rate']) if info['sample_rate'] else 0.0
+    return {
+        'kind': 'fsb',
+        'mode': info['mode'],
+        'mode_name': mode_names.get(info['mode'], f'Mode {info["mode"]}'),
+        'channels': info['channels'],
+        'sample_rate': info['sample_rate'],
+        'sample_count': info['sample_count'],
+        'duration': duration,
+        'data_size': len(info['payload']),
+        'loop_start': loop_start,
+        'loop_end': loop_end,
+        'embedded_name': embedded_name or '',
+    }
+
+
+def _backend_inspect_dsp_bytes_detailed(self, dsp_bytes: bytes):
+    if len(dsp_bytes) < DSP_HEADER_SIZE:
+        raise ToolError('DSP data is smaller than the required 0x60-byte header.')
+    h = self.read_dsp_header_bytes(dsp_bytes) if hasattr(self, 'read_dsp_header_bytes') else None
+    if h is None:
+        h1 = self._parse_single_dsp_header(dsp_bytes[:DSP_HEADER_SIZE])
+        channels = 1
+        coeff_blob = h1['coeff_blob']
+        raw_header = h1['raw_header']
+        data_offset = DSP_HEADER_SIZE
+        if len(dsp_bytes) >= DSP_HEADER_SIZE * 2:
+            try:
+                h2 = self._parse_single_dsp_header(dsp_bytes[DSP_HEADER_SIZE:DSP_HEADER_SIZE * 2])
+            except ToolError:
+                h2 = None
+            if h2 and all(h1[k] == h2[k] for k in ('sample_count', 'nibble_count', 'sample_rate', 'loop_flag', 'fmt')):
+                channels = 2
+                coeff_blob = h1['coeff_blob'] + h2['coeff_blob']
+                raw_header = dsp_bytes[:DSP_HEADER_SIZE * 2]
+                data_offset = DSP_HEADER_SIZE * 2
+        h = DspHeader(
+            sample_count=h1['sample_count'], nibble_count=h1['nibble_count'], sample_rate=h1['sample_rate'],
+            loop_flag=h1['loop_flag'], fmt=h1['fmt'], loop_start=h1['loop_start'], loop_end=h1['loop_end'],
+            current_address=h1['current_address'], channels=channels, block_size=h1['block_size'], coeff_blob=coeff_blob,
+            raw_header=raw_header, data_offset=data_offset,
+        )
+    duration = (h.sample_count / h.sample_rate) if h.sample_rate else 0.0
+    loop_start_samples = max(0, ((h.loop_start - 2) // 16) * 14 + ((h.loop_start - 2) % 16)) if h.loop_flag else None
+    loop_end_samples = max(0, ((h.loop_end - 2) // 16) * 14 + ((h.loop_end - 2) % 16) + 1) if h.loop_flag else None
+    return {
+        'kind': 'dsp',
+        'mode': 6,
+        'mode_name': 'GCADPCM (DSP)',
+        'channels': h.channels,
+        'sample_rate': h.sample_rate,
+        'sample_count': h.sample_count,
+        'duration': duration,
+        'data_size': max(0, len(dsp_bytes) - h.data_offset),
+        'loop_start': loop_start_samples,
+        'loop_end': loop_end_samples,
+    }
+
+
+def _backend_inspect_audio_path(self, path: Path):
+    self.ensure_exists(path)
+    data = path.read_bytes()
+    suffix = path.suffix.lower()
+    if suffix in ('.wav', '.wave'):
+        return self.inspect_wav_bytes(data)
+    if suffix == '.dsp':
+        return self.inspect_dsp_bytes_detailed(data)
+    if suffix == '.fsb' or data[:4] == b'FSB5':
+        return self.inspect_fsb_bytes_detailed(data)
+    raise ToolError(f'Unsupported audio path for inspection: {path}')
+
+
+def _backend_read_dsp_header_bytes(self, dsp_bytes: bytes):
+    if len(dsp_bytes) < DSP_HEADER_SIZE:
+        raise ToolError('DSP file is smaller than 0x60-byte header.')
+    h1 = self._parse_single_dsp_header(dsp_bytes[:DSP_HEADER_SIZE])
+    channels = 1
+    coeff_blob = h1['coeff_blob']
+    raw_header = h1['raw_header']
+    data_offset = DSP_HEADER_SIZE
+    if len(dsp_bytes) >= DSP_HEADER_SIZE * 2:
+        try:
+            h2 = self._parse_single_dsp_header(dsp_bytes[DSP_HEADER_SIZE:DSP_HEADER_SIZE * 2])
+        except ToolError:
+            h2 = None
+        if h2 and all(h1[k] == h2[k] for k in ('sample_count', 'nibble_count', 'sample_rate', 'loop_flag', 'fmt')):
+            channels = 2
+            coeff_blob = h1['coeff_blob'] + h2['coeff_blob']
+            raw_header = dsp_bytes[:DSP_HEADER_SIZE * 2]
+            data_offset = DSP_HEADER_SIZE * 2
+    return DspHeader(
+        sample_count=h1['sample_count'], nibble_count=h1['nibble_count'], sample_rate=h1['sample_rate'],
+        loop_flag=h1['loop_flag'], fmt=h1['fmt'], loop_start=h1['loop_start'], loop_end=h1['loop_end'],
+        current_address=h1['current_address'], channels=channels, block_size=h1['block_size'], coeff_blob=coeff_blob,
+        raw_header=raw_header, data_offset=data_offset,
+    )
+
+
+def _backend_build_mode2_fsb_from_wav(self, wav_path: Path, out_path: Path, embedded_name: str = ''):
+    self.ensure_exists(wav_path)
+    sample_rate, channels, samples = self._load_wav_pcm16(wav_path)
+    pcm_bytes = samples.astype('<i2').tobytes()
+    sample_count = len(samples)
+    sample_mode = ((sample_count & 0x3FFFFFFF) << 34) | 0x1
+    sample_header = bytearray(struct.pack('<Q', sample_mode))
+    sample_header += _ca_chunk_header(1, 1, 1) + bytes([channels & 0xFF])
+    sample_header += _ca_chunk_header(2, 4, 0) + struct.pack('<I', sample_rate)
+    name_table = b''
+    if embedded_name:
+        safe_name = embedded_name.encode('ascii', errors='ignore')[:255]
+        name_table = safe_name + b'\x00'
+    version = 0
+    num_samples = 1
+    sample_header_size = len(sample_header)
+    name_table_size = len(name_table)
+    data_size = len(pcm_bytes)
+    mode = 2
+    header_size = 64
+    header = bytearray(header_size)
+    header[:4] = b'FSB5'
+    struct.pack_into('<IIIIII', header, 4, version, num_samples, sample_header_size, name_table_size, data_size, mode)
+    out = bytes(header) + bytes(sample_header) + name_table + pcm_bytes
+    Path(out_path).write_bytes(out)
+    return Path(out_path)
+
+
+def _backend_patch_fsb_loop_bytes(self, fsb_bytes: bytes, loop_start_samples: int, loop_end_samples: int):
+    blob = bytearray(fsb_bytes)
+    meta = self._parse_fsb_header(blob)
+    sh = bytearray(meta['sample_header'])
+    found = False
+    last_chunk = None
+    for chunk in self._iter_sample_chunks(sh):
+        last_chunk = chunk
+        if chunk['type'] == 3 and chunk['size'] == 8:
+            struct.pack_into('<II', sh, chunk['data_offset'], int(loop_start_samples), int(loop_end_samples))
+            found = True
+            break
+    if not found:
+        if last_chunk is not None:
+            raw = struct.unpack_from('<I', sh, last_chunk['header_offset'])[0]
+            raw |= 0x1
+            struct.pack_into('<I', sh, last_chunk['header_offset'], raw)
+        elif sh:
+            sh[0] |= 0x1
+        sh += _ca_chunk_header(3, 8, 0) + struct.pack('<II', int(loop_start_samples), int(loop_end_samples))
+        prefix = blob[:meta['sample_header_off']]
+        suffix = blob[meta['name_table_off']:]
+        blob = bytearray(prefix + sh + suffix)
+        struct.pack_into('<I', blob, 12, len(sh))
+    else:
+        blob[meta['sample_header_off']:meta['sample_header_off'] + meta['sample_header_size']] = sh
+    return bytes(blob)
+
+
+def _backend_try_patch_embedded_name(self, fsb_bytes: bytes, new_name: str):
+    old_name = self.get_segment_name_bytes(fsb_bytes)
+    if not old_name:
+        raise ToolError('No embedded segment name was found in this FSB segment.')
+    old_bytes = old_name.encode('ascii', errors='ignore')
+    new_bytes = new_name.encode('ascii', errors='ignore')
+    if not new_bytes:
+        raise ToolError('Embedded segment name cannot be empty.')
+    if len(new_bytes) > len(old_bytes):
+        raise ToolError(f'New embedded segment name is longer than the existing field ({len(new_bytes)} > {len(old_bytes)}). Shorten it or keep the same length.')
+    blob = bytearray(fsb_bytes)
+    idx = bytes(blob).rfind(old_bytes)
+    if idx < 0:
+        raise ToolError('Could not locate the embedded segment name inside the FSB blob.')
+    padded = new_bytes + (b'\x00' * (len(old_bytes) - len(new_bytes)))
+    blob[idx:idx + len(old_bytes)] = padded
+    return bytes(blob)
+
+
+def _backend_update_combinedaudio_entry(self, combined_audio_path: Path, table_index: int, new_blob: bytes = None, new_sound_id: int = None, output_path: Path = None):
+    parsed = self.parse_combined_audio_table(combined_audio_path)
+    if table_index < 0 or table_index >= len(parsed['entries']):
+        raise ToolError(f'CombinedAudio table index out of range: {table_index}')
+    output_path = Path(output_path or combined_audio_path)
+    physical_entries = list(parsed['entries_by_physical'])
+    replacement_map = {entry.table_index: parsed['data'][entry.absolute_offset:entry.absolute_end_offset] for entry in parsed['entries']}
+    sound_id_map = {entry.table_index: entry.sound_id for entry in parsed['entries']}
+    if new_blob is not None:
+        if not bytes(new_blob).startswith(b'FSB5'):
+            raise ToolError('Updated entry blob must be an FSB5 segment.')
+        replacement_map[table_index] = bytes(new_blob)
+    if new_sound_id is not None:
+        sound_id_map[table_index] = int(new_sound_id)
+    entries = [None] * parsed['entry_count']
+    data_chunks = []
+    current_offset = 0
+    for entry in physical_entries:
+        blob = replacement_map[entry.table_index]
+        current_offset = self._align_up(current_offset)
+        entries[entry.table_index] = (sound_id_map[entry.table_index], current_offset, len(blob))
+        data_chunks.append((current_offset, blob))
+        current_offset += len(blob)
+    header = bytearray(4 + (parsed['entry_count'] * 12))
+    struct.pack_into('<I', header, 0, parsed['entry_count'])
+    for idx, packed in enumerate(entries):
+        sound_id, fsb_offset, fsb_size = packed
+        struct.pack_into('<III', header, 4 + (idx * 12), sound_id, fsb_offset, fsb_size)
+    out = bytearray(header)
+    header_length = len(header)
+    for fsb_offset, blob in data_chunks:
+        absolute_offset = header_length + fsb_offset
+        if len(out) < absolute_offset:
+            out.extend(b'\x00' * (absolute_offset - len(out)))
+        out.extend(blob)
+    output_path.write_bytes(bytes(out))
+    return output_path
+
+
+CAToolBackend.inspect_wav_bytes = _backend_inspect_wav_bytes
+CAToolBackend.inspect_fsb_bytes_detailed = _backend_inspect_fsb_bytes_detailed
+CAToolBackend.inspect_dsp_bytes_detailed = _backend_inspect_dsp_bytes_detailed
+CAToolBackend.inspect_audio_path = _backend_inspect_audio_path
+CAToolBackend.read_dsp_header_bytes = _backend_read_dsp_header_bytes
+CAToolBackend.build_mode2_fsb_from_wav = _backend_build_mode2_fsb_from_wav
+CAToolBackend.patch_fsb_loop_bytes = _backend_patch_fsb_loop_bytes
+CAToolBackend.try_patch_embedded_name = _backend_try_patch_embedded_name
+CAToolBackend.update_combinedaudio_entry = _backend_update_combinedaudio_entry
+
+
+def _gui_init_archive_state(self):
+    self._archive_preview_cache = {}
+    self._playback_after_id = None
+    self._loop_after_id = None
+    self._preview_temp_wav = None
+    self._current_wav_bytes = None
+    self._current_preview_meta = None
+    self._sidecar_cache = None
+
+
+def _gui_sidecar_path(self):
+    p = Path(self.archive_path.get().strip())
+    return p.with_suffix(p.suffix + '.sidecar.json') if p.suffix else p.with_name(p.name + '.sidecar.json')
+
+
+def _gui_load_sidecar(self):
+    sidecar = self._gui_sidecar_path()
+    if sidecar.exists():
+        try:
+            self._sidecar_cache = json.loads(sidecar.read_text(encoding='utf-8'))
+        except Exception:
+            self._sidecar_cache = {'entries': {}}
+    else:
+        self._sidecar_cache = {'entries': {}}
+    self._sidecar_cache.setdefault('entries', {})
+    return self._sidecar_cache
+
+
+def _gui_save_sidecar(self):
+    if self._sidecar_cache is None:
+        self._gui_load_sidecar()
+    sidecar = self._gui_sidecar_path()
+    sidecar.write_text(json.dumps(self._sidecar_cache, indent=2), encoding='utf-8')
+    return sidecar
+
+
+def _gui_build_archive_tab(self, tab):
+    self._gui_init_archive_state()
+    tab.columnconfigure(0, weight=1)
+    tab.rowconfigure(3, weight=1)
+    self.archive_path = tk.StringVar()
+    self.archive_out_path = tk.StringVar()
+    self.archive_seek_var = tk.DoubleVar(value=0.0)
+    self.archive_seek_label_var = tk.StringVar(value='Seek: 0.000s')
+    self.archive_autoplay_next_var = tk.BooleanVar(value=False)
+    self.archive_loop_preview_var = tk.BooleanVar(value=False)
+    self.loop_start_samples_var = tk.StringVar(value='0')
+    self.loop_end_samples_var = tk.StringVar(value='0')
+    self.loop_start_seconds_var = tk.StringVar(value='0.000')
+    self.loop_end_seconds_var = tk.StringVar(value='0.000')
+    self.meta_sound_id_var = tk.StringVar()
+    self.meta_embedded_name_var = tk.StringVar()
+    self.meta_alias_var = tk.StringVar()
+    self.meta_notes_var = tk.StringVar()
+    self.convert_template_fsb = tk.StringVar()
+    self.convert_mode_wav_in = tk.StringVar()
+    self.convert_mode2_out = tk.StringVar()
+    self.convert_mode6_out = tk.StringVar()
+
+    self.add_path_row(tab, 0, 'CombinedAudio.bin', self.archive_path, filetypes=(("BIN Files", "*.bin"), ("All Files", "*.*")))
+    self.add_path_row(tab, 1, 'Replacement output (.bin, optional)', self.archive_out_path, filetypes=(("BIN Files", "*.bin"),), save=True, default_ext='.bin')
+
+    btns = ttk.Frame(tab)
+    btns.grid(row=2, column=0, columnspan=3, sticky='w', pady=(4, 8))
+    for text, cmd in [
+        ('Load CombinedAudio', lambda: self.run_action('CombinedAudio Table', self._load_archive_table)),
+        ('Replace Selected SFX', lambda: self.run_action('Replace Selected Sound', self._replace_archive_selection)),
+        ('Apply Loop Edit', lambda: self.run_action('Apply Loop Edit', self._apply_loop_metadata_to_selected)),
+        ('Save Metadata', lambda: self.run_action('Save Entry Metadata', self._save_selected_metadata)),
+        ('Reload Table', lambda: self.run_action('Reload Table', self._reload_archive_table)),
+        ('Copy Selected', lambda: self.run_action('Copy Selected Row', self._copy_archive_row)),
+        ('Copy all as TSV', lambda: self.run_action('Copy All Rows', self._copy_all_archive_rows)),
+    ]:
+        ttk.Button(btns, text=text, command=cmd).pack(side='left', padx=(0, 6))
+
+    content = ttk.Panedwindow(tab, orient='horizontal')
+    content.grid(row=3, column=0, columnspan=3, sticky='nsew')
+
+    tree_panel = ttk.Frame(content, padding=4)
+    preview_panel = ttk.Frame(content, padding=4)
+    right_panel = ttk.Frame(content, padding=4)
+    content.add(tree_panel, weight=4)
+    content.add(preview_panel, weight=4)
+    content.add(right_panel, weight=3)
+
+    tree_panel.columnconfigure(0, weight=1)
+    tree_panel.rowconfigure(1, weight=1)
+    ttk.Label(tree_panel, text='CombinedAudio Entries').grid(row=0, column=0, columnspan=2, sticky='w')
+
+    columns = ('table_index', 'physical_index', 'sound_id', 'offset_hex', 'size', 'end_hex', 'fsb_name', 'alias')
+    self.archive_tree = ttk.Treeview(tree_panel, columns=columns, show='headings', height=18)
+    headings = {
+        'table_index': 'Table #', 'physical_index': 'Segment #', 'sound_id': 'Sound ID', 'offset_hex': 'Offset',
+        'size': 'Size', 'end_hex': 'End', 'fsb_name': 'FSB Name', 'alias': 'Alias',
+    }
+    widths = {'table_index': 70, 'physical_index': 80, 'sound_id': 100, 'offset_hex': 95, 'size': 75, 'end_hex': 95, 'fsb_name': 200, 'alias': 140}
+    for col in columns:
+        self.archive_tree.heading(col, text=headings[col])
+        self.archive_tree.column(col, width=widths[col], anchor='w', stretch=(col in ('fsb_name', 'alias')))
+    self.archive_tree.grid(row=1, column=0, sticky='nsew')
+    tree_yscroll = ttk.Scrollbar(tree_panel, orient='vertical', command=self.archive_tree.yview)
+    tree_yscroll.grid(row=1, column=1, sticky='ns')
+    tree_xscroll = ttk.Scrollbar(tree_panel, orient='horizontal', command=self.archive_tree.xview)
+    tree_xscroll.grid(row=2, column=0, sticky='ew', pady=(2, 0))
+    self.archive_tree.configure(yscrollcommand=tree_yscroll.set, xscrollcommand=tree_xscroll.set)
+    self.archive_tree.bind('<<TreeviewSelect>>', lambda e: self._on_archive_tree_select())
+
+    preview_panel.columnconfigure(0, weight=1)
+    preview_panel.rowconfigure(6, weight=1)
+    ttk.Label(preview_panel, text='Waveform Preview').grid(row=0, column=0, sticky='w')
+    self.waveform_canvas = tk.Canvas(preview_panel, width=640, height=210, bg='#101010', highlightthickness=1, highlightbackground='#404040')
+    self.waveform_canvas.grid(row=1, column=0, sticky='ew', pady=(4, 6))
+
+    preview_btns = ttk.Frame(preview_panel)
+    preview_btns.grid(row=2, column=0, sticky='w', pady=(0, 6))
+    for text, cmd in [
+        ('Play Selected FSB', lambda: self.run_action('Play Selected FSB', self._play_archive_selection)),
+        ('Play via seek', lambda: self.run_action('Play From Seek', self._play_from_seek)),
+        ('Restart', lambda: self.run_action('Restart Playback', self._restart_preview_playback)),
+        ('Next', lambda: self.run_action('Next Entry', self._play_next_archive_entry)),
+        ('Stop Playback', lambda: self.run_action('Stop Playback', self._stop_playback)),
+    ]:
+        ttk.Button(preview_btns, text=text, command=cmd).pack(side='left', padx=(0, 6))
+
+    seek_row = ttk.Frame(preview_panel)
+    seek_row.grid(row=3, column=0, sticky='ew')
+    ttk.Label(seek_row, textvariable=self.archive_seek_label_var).pack(side='left')
+    ttk.Checkbutton(seek_row, text='Autoplay next', variable=self.archive_autoplay_next_var).pack(side='right')
+    ttk.Checkbutton(seek_row, text='Loop preview', variable=self.archive_loop_preview_var).pack(side='right', padx=(0, 12))
+    self.archive_seek_scale = tk.Scale(preview_panel, from_=0.0, to=1.0, resolution=0.001, orient='horizontal', variable=self.archive_seek_var, showvalue=False, command=lambda _v: self._update_seek_label())
+    self.archive_seek_scale.grid(row=4, column=0, sticky='ew')
+    ttk.Label(preview_panel, text='Entry Summary / Preview Log').grid(row=5, column=0, sticky='w', pady=(8, 4))
+    self.archive_summary = tk.Text(preview_panel, height=16, wrap='word')
+    self.archive_summary.grid(row=6, column=0, sticky='nsew')
+    preview_scroll = ttk.Scrollbar(preview_panel, orient='vertical', command=self.archive_summary.yview)
+    preview_scroll.grid(row=6, column=1, sticky='ns')
+    self.archive_summary.configure(state='disabled', yscrollcommand=preview_scroll.set)
+
+    right_panel.columnconfigure(1, weight=1)
+    ttk.Label(right_panel, text='Loop / Metadata Editor').grid(row=0, column=0, columnspan=2, sticky='w')
+    fields = [
+        ('Loop Start (samples)', self.loop_start_samples_var),
+        ('Loop End (samples)', self.loop_end_samples_var),
+        ('Loop Start (seconds)', self.loop_start_seconds_var),
+        ('Loop End (seconds)', self.loop_end_seconds_var),
+        ('Sound ID', self.meta_sound_id_var),
+        ('Embedded name', self.meta_embedded_name_var),
+        ('Alias', self.meta_alias_var),
+        ('Notes / comments', self.meta_notes_var),
+    ]
+    for idx, (label, var) in enumerate(fields, start=1):
+        ttk.Label(right_panel, text=label).grid(row=idx, column=0, sticky='w', pady=2)
+        ttk.Entry(right_panel, textvariable=var).grid(row=idx, column=1, sticky='ew', pady=2)
+
+    ttk.Separator(right_panel, orient='horizontal').grid(row=10, column=0, columnspan=2, sticky='ew', pady=8)
+    ttk.Label(right_panel, text='Mode conversion').grid(row=11, column=0, columnspan=2, sticky='w')
+    ttk.Label(right_panel, text='Template FSB (for Mode 6)').grid(row=12, column=0, sticky='w', pady=2)
+    ttk.Entry(right_panel, textvariable=self.convert_template_fsb).grid(row=12, column=1, sticky='ew', pady=2)
+    ttk.Label(right_panel, text='Source WAV').grid(row=13, column=0, sticky='w', pady=2)
+    ttk.Entry(right_panel, textvariable=self.convert_mode_wav_in).grid(row=13, column=1, sticky='ew', pady=2)
+    ttk.Label(right_panel, text='Mode 2 FSB output').grid(row=14, column=0, sticky='w', pady=2)
+    ttk.Entry(right_panel, textvariable=self.convert_mode2_out).grid(row=14, column=1, sticky='ew', pady=2)
+    ttk.Label(right_panel, text='Mode 6 FSB output').grid(row=15, column=0, sticky='w', pady=2)
+    ttk.Entry(right_panel, textvariable=self.convert_mode6_out).grid(row=15, column=1, sticky='ew', pady=2)
+    conv_btns = ttk.Frame(right_panel)
+    conv_btns.grid(row=16, column=0, columnspan=2, sticky='w', pady=(6, 0))
+    ttk.Button(conv_btns, text='WAV → Mode 2 FSB', command=lambda: self.run_action('WAV → Mode 2 FSB', self._convert_wav_to_mode2_fsb)).pack(side='left')
+    ttk.Button(conv_btns, text='WAV → Mode 6 FSB', command=lambda: self.run_action('WAV → Mode 6 FSB', self._convert_wav_to_mode6_fsb)).pack(side='left', padx=(6, 0))
+
+    if _tkdnd2 is not None:
+        try:
+            self.archive_tree.drop_target_register(_tkdnd2.DND_FILES)
+            self.archive_tree.dnd_bind('<<Drop>>', lambda event: self._on_archive_drop(event))
+        except Exception:
+            pass
+
+
+def _gui_draw_waveform(self, wav_bytes: bytes):
+    self.waveform_canvas.delete('all')
+    info = self.backend.inspect_wav_bytes(wav_bytes)
+    pcm = info['pcm']
+    if info['sample_width'] != 2 or pcm.size == 0:
+        self.waveform_canvas.create_text(10, 10, anchor='nw', fill='white', text='Waveform preview requires 16-bit decoded WAV data.')
+        return info
+    if pcm.ndim > 1:
+        pcm = pcm.mean(axis=1)
+    width = max(1, int(self.waveform_canvas.winfo_width() or 640))
+    height = max(1, int(self.waveform_canvas.winfo_height() or 180))
+    self.waveform_canvas.create_rectangle(0, 0, width, height, outline='')
+    center_y = height / 2.0
+    samples = pcm.astype(np.float32)
+    step = max(1, len(samples) // width)
+    peaks = []
+    for x in range(width):
+        chunk = samples[x * step:(x + 1) * step]
+        if chunk.size == 0:
+            amp = 0.0
+        else:
+            amp = float(np.max(np.abs(chunk))) / 32767.0
+        peaks.append(amp)
+    for x, amp in enumerate(peaks):
+        y = amp * (height * 0.45)
+        self.waveform_canvas.create_line(x, center_y - y, x, center_y + y, fill='#4ec9b0')
+    self.waveform_canvas.create_line(0, center_y, width, center_y, fill='#404040')
+    return info
+
+
+def _gui_trim_wav_bytes(self, wav_bytes: bytes, start_seconds: float = 0.0, end_seconds: float = None):
+    with wave.open(io.BytesIO(wav_bytes), 'rb') as src:
+        channels = src.getnchannels()
+        sampwidth = src.getsampwidth()
+        framerate = src.getframerate()
+        frame_count = src.getnframes()
+        raw = src.readframes(frame_count)
+    if sampwidth not in (1, 2, 3, 4):
+        raise ToolError('Unsupported WAV sample width for trimming.')
+    start_frame = max(0, min(frame_count, int(round(start_seconds * framerate))))
+    end_frame = frame_count if end_seconds is None else max(start_frame, min(frame_count, int(round(end_seconds * framerate))))
+    bytes_per_frame = channels * sampwidth
+    body = raw[start_frame * bytes_per_frame:end_frame * bytes_per_frame]
+    out = io.BytesIO()
+    with wave.open(out, 'wb') as dst:
+        dst.setnchannels(channels)
+        dst.setsampwidth(sampwidth)
+        dst.setframerate(framerate)
+        dst.writeframes(body)
+    return out.getvalue(), (end_frame - start_frame) / framerate if framerate else 0.0
+
+
+def _gui_cancel_playback_after(self):
+    for attr in ('_playback_after_id', '_loop_after_id'):
+        handle = getattr(self, attr, None)
+        if handle:
+            try:
+                self.after_cancel(handle)
+            except Exception:
+                pass
+            setattr(self, attr, None)
+
+
+def _gui_update_seek_label(self):
+    seconds = float(self.archive_seek_var.get())
+    self.archive_seek_label_var.set(f'Seek: {seconds:.3f}s')
+
+
+def _gui_set_archive_summary(self, text: str):
+    self.archive_summary.configure(state='normal')
+    self.archive_summary.delete('1.0', 'end')
+    self.archive_summary.insert('1.0', text)
+    self.archive_summary.configure(state='disabled')
+
+
+def _gui_get_selected_archive_table_index(self) -> int:
+    selected = self.archive_tree.selection()
+    if not selected:
+        raise ToolError('Select a row in the CombinedAudio Table tab first.')
+    values = self.archive_tree.item(selected[0], 'values')
+    if not values:
+        raise ToolError('Could not read the selected CombinedAudio row.')
+    return int(values[0])
+
+
+def _gui_load_archive_table(self):
+    info = self.backend.inspect_combined_audio(Path(self.archive_path.get()))
+    sidecar = self._gui_load_sidecar()
+    for item in self.archive_tree.get_children():
+        self.archive_tree.delete(item)
+    for row in sorted(info['rows'], key=lambda r: r['table_index']):
+        extra = sidecar['entries'].get(str(row['table_index']), {})
+        self.archive_tree.insert('', 'end', values=(row['table_index'], row['physical_index'], row['sound_id'], f"0x{row['offset']:X}", row['size'], f"0x{row['end_offset']:X}", row['fsb_name'], extra.get('alias', '')))
+    summary = (
+        f"Entry count: {info['entry_count']}\n"
+        f"Header length: 0x{info['header_length']:X} ({info['header_length']})\n"
+        f"File size: 0x{info['file_size']:X} ({info['file_size']})\n"
+        f"Rows loaded: {len(info['rows'])}\n"
+        "Columns: table index, physical FSB order, sound ID, offset, size, end offset, embedded FSB name, alias."
+    )
+    self._gui_set_archive_summary(summary)
+    if info['rows']:
+        first = self.archive_tree.get_children()[0]
+        self.archive_tree.selection_set(first)
+        self.archive_tree.focus(first)
+        self._on_archive_tree_select()
+    return f'Loaded {len(info["rows"])} CombinedAudio entries.'
+
+
+def _gui_prepare_preview_for_table_index(self, table_index: int):
+    key = ('table', str(Path(self.archive_path.get())), table_index)
+    cached = self._archive_preview_cache.get(key)
+    if cached:
+        return cached
+    fsb_bytes = self.backend.get_combined_audio_entry_fsb_bytes(Path(self.archive_path.get()), table_index)
+    wav_bytes = self.backend.decode_fsb_bytes_to_wav_bytes(fsb_bytes)
+    fsb_info = self.backend.inspect_fsb_bytes_detailed(fsb_bytes)
+    wav_info = self.backend.inspect_wav_bytes(wav_bytes)
+    data = {'fsb_bytes': fsb_bytes, 'wav_bytes': wav_bytes, 'fsb_info': fsb_info, 'wav_info': wav_info}
+    self._archive_preview_cache[key] = data
+    return data
+
+
+def _gui_on_archive_tree_select(self):
+    try:
+        table_index = self._gui_get_selected_archive_table_index()
+    except Exception:
+        return
+    data = self._gui_prepare_preview_for_table_index(table_index)
+    wav_info = self._gui_draw_waveform(data['wav_bytes'])
+    fsb_info = data['fsb_info']
+    self._current_preview_meta = data
+    self.archive_seek_scale.configure(to=max(0.001, wav_info['duration']))
+    self.archive_seek_var.set(0.0)
+    self._gui_update_seek_label()
+    self.loop_start_samples_var.set(str(fsb_info.get('loop_start') or 0))
+    self.loop_end_samples_var.set(str(fsb_info.get('loop_end') or fsb_info['sample_count']))
+    if fsb_info.get('loop_start') is not None:
+        self.loop_start_seconds_var.set(f"{fsb_info['loop_start'] / fsb_info['sample_rate']:.3f}")
+    else:
+        self.loop_start_seconds_var.set('0.000')
+    if fsb_info.get('loop_end') is not None:
+        self.loop_end_seconds_var.set(f"{fsb_info['loop_end'] / fsb_info['sample_rate']:.3f}")
+    else:
+        self.loop_end_seconds_var.set(f"{fsb_info['duration']:.3f}")
+    self.meta_sound_id_var.set(str(self.archive_tree.item(self.archive_tree.selection()[0], 'values')[2]))
+    self.meta_embedded_name_var.set(fsb_info.get('embedded_name', ''))
+    side = self._gui_load_sidecar()['entries'].get(str(table_index), {})
+    self.meta_alias_var.set(side.get('alias', ''))
+    self.meta_notes_var.set(side.get('notes', ''))
+    summary = [
+        f"Table entry: {table_index}",
+        f"Mode: {fsb_info['mode_name']} ({fsb_info['mode']})",
+        f"Sample rate: {fsb_info['sample_rate']} Hz",
+        f"Channels: {fsb_info['channels']}",
+        f"Samples: {fsb_info['sample_count']}",
+        f"Duration: {fsb_info['duration']:.3f}s",
+        f"Payload/data size: {fsb_info['data_size']} bytes",
+        f"Loop: {fsb_info.get('loop_start')} -> {fsb_info.get('loop_end')}",
+        f"Embedded name: {fsb_info.get('embedded_name', '') or '(none)'}",
+        f"Alias: {side.get('alias', '') or '(none)'}",
+        f"Notes: {side.get('notes', '') or '(none)'}",
+    ]
+    self._gui_set_archive_summary('\n'.join(summary))
+
+
+def _gui_cleanup_preview_temp(self):
+    temp_path = getattr(self, '_preview_temp_wav', None)
+    self._preview_temp_wav = None
+    if temp_path:
+        try:
+            Path(temp_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _gui_play_wav_bytes(self, wav_bytes: bytes, playback_duration: float = None, restart_callback=None):
+    if winsound is None:
+        raise ToolError('Playback is only available on Windows via winsound.')
+    if not wav_bytes:
+        raise ToolError('No WAV data was generated for playback.')
+    self._stop_playback(silent=True)
+    self._current_wav_bytes = wav_bytes
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+    try:
+        tmp.write(wav_bytes)
+        tmp.flush()
+    finally:
+        tmp.close()
+    self._preview_temp_wav = tmp.name
+    winsound.PlaySound(self._preview_temp_wav, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+    self._gui_cancel_playback_after()
+    if playback_duration is not None and playback_duration > 0:
+        if restart_callback is not None:
+            self._loop_after_id = self.after(max(1, int(playback_duration * 1000)), restart_callback)
+        elif self.archive_autoplay_next_var.get():
+            self._playback_after_id = self.after(max(1, int(playback_duration * 1000)), lambda: self.run_action('Autoplay Next', self._play_next_archive_entry))
+
+
+def _gui_stop_playback(self, silent: bool = False):
+    if winsound is None:
+        raise ToolError('Playback stop is only available on Windows via winsound.')
+    winsound.PlaySound(None, 0)
+    self._current_wav_bytes = None
+    self._gui_cancel_playback_after()
+    self._gui_cleanup_preview_temp()
+    if not silent:
+        return 'Stopped audio playback.'
+
+
+def _gui_play_archive_selection(self):
+    table_index = self._gui_get_selected_archive_table_index()
+    data = self._gui_prepare_preview_for_table_index(table_index)
+    if self.archive_loop_preview_var.get() and data['fsb_info'].get('loop_start') is not None and data['fsb_info'].get('loop_end') is not None:
+        sr = data['fsb_info']['sample_rate']
+        start_s = data['fsb_info']['loop_start'] / sr
+        end_s = data['fsb_info']['loop_end'] / sr
+        loop_wav, dur = self._gui_trim_wav_bytes(data['wav_bytes'], start_s, end_s)
+        self._gui_play_wav_bytes(loop_wav, dur, restart_callback=lambda: self._gui_play_wav_bytes(loop_wav, dur, restart_callback=lambda: self._gui_play_wav_bytes(loop_wav, dur, restart_callback=lambda: self._play_archive_selection())))
+        return f'Loop-previewing CombinedAudio table entry #{table_index}.'
+    self._gui_play_wav_bytes(data['wav_bytes'], data['wav_info']['duration'])
+    return f'Playing CombinedAudio table entry #{table_index} from memory.'
+
+
+def _gui_play_from_seek(self):
+    table_index = self._gui_get_selected_archive_table_index()
+    data = self._gui_prepare_preview_for_table_index(table_index)
+    start = float(self.archive_seek_var.get())
+    if self.archive_loop_preview_var.get() and data['fsb_info'].get('loop_start') is not None and data['fsb_info'].get('loop_end') is not None:
+        start = max(start, data['fsb_info']['loop_start'] / data['fsb_info']['sample_rate'])
+        end = data['fsb_info']['loop_end'] / data['fsb_info']['sample_rate']
+        trim, dur = self._gui_trim_wav_bytes(data['wav_bytes'], start, end)
+        self._gui_play_wav_bytes(trim, dur)
+        return f'Playing loop preview of entry #{table_index} from {start:.3f}s.'
+    trim, dur = self._gui_trim_wav_bytes(data['wav_bytes'], start, None)
+    self._gui_play_wav_bytes(trim, dur)
+    return f'Playing entry #{table_index} from {start:.3f}s.'
+
+
+def _gui_restart_preview_playback(self):
+    self.archive_seek_var.set(0.0)
+    self._gui_update_seek_label()
+    return self._play_archive_selection()
+
+
+def _gui_play_next_archive_entry(self):
+    items = list(self.archive_tree.get_children())
+    if not items:
+        raise ToolError('No CombinedAudio rows are loaded.')
+    selected = self.archive_tree.selection()
+    if not selected:
+        next_item = items[0]
+    else:
+        idx = items.index(selected[0])
+        next_item = items[(idx + 1) % len(items)]
+    self.archive_tree.selection_set(next_item)
+    self.archive_tree.focus(next_item)
+    self.archive_tree.see(next_item)
+    self._on_archive_tree_select()
+    return self._play_archive_selection()
+
+
+def _gui_reload_archive_table(self):
+    self._archive_preview_cache.clear()
+    return self._load_archive_table()
+
+
+def _gui_make_diff_summary(self, before_info: dict, after_info: dict, table_index: int, name: str, current_entry_size: int, new_blob_size: int):
+    old_end = current_entry_size
+    shifts = 'yes' if new_blob_size != current_entry_size else 'no'
+    return (
+        f'Replace CombinedAudio entry #{table_index} with {name}?\n\n'
+        f'Old size vs new size: {current_entry_size} -> {new_blob_size} bytes\n'
+        f'Old mode vs new mode: {before_info.get("mode_name")} -> {after_info.get("mode_name")}\n'
+        f'Sample rate: {before_info.get("sample_rate")} -> {after_info.get("sample_rate")}\n'
+        f'Channel count: {before_info.get("channels")} -> {after_info.get("channels")}\n'
+        f'Name: {before_info.get("embedded_name", "")} -> {after_info.get("embedded_name", "")}\n'
+        f'Whether offsets shifted: {shifts}'
+    )
+
+
+def _gui_replace_archive_selection(self):
+    combined_audio_path = Path(self.archive_path.get())
+    table_index = self._gui_get_selected_archive_table_index()
+    replacement = filedialog.askopenfilename(filetypes=(("Supported Audio/FSB", "*.fsb *.wav *.wave *.dsp"), ("All Files", "*.*")))
+    if not replacement:
+        return 'Replacement canceled.'
+    preview = self._gui_prepare_preview_for_table_index(table_index)
+    template_fsb = preview['fsb_bytes']
+    new_blob = self.backend.build_replacement_fsb_from_source(template_fsb, Path(replacement))
+    new_info = self.backend.inspect_fsb_bytes_detailed(new_blob)
+    current_size = len(template_fsb)
+    diff_text = self._gui_make_diff_summary(preview['fsb_info'], new_info, table_index, Path(replacement).name, current_size, len(new_blob))
+    if not messagebox.askyesno('Replacement diff', diff_text):
+        return 'Replacement canceled after diff review.'
+    output_text = self.archive_out_path.get().strip()
+    output_path = Path(output_text) if output_text else combined_audio_path
+    result = self.backend.update_combinedaudio_entry(combined_audio_path, table_index, new_blob=new_blob, output_path=output_path)
+    self.archive_path.set(str(result))
+    self._archive_preview_cache.clear()
+    self._load_archive_table()
+    return f'Replaced CombinedAudio table entry #{table_index} using {Path(replacement).name} and reloaded: {result}'
+
+
+def _gui_apply_loop_metadata_to_selected(self):
+    table_index = self._gui_get_selected_archive_table_index()
+    preview = self._gui_prepare_preview_for_table_index(table_index)
+    sample_rate = preview['fsb_info']['sample_rate']
+    start_text = self.loop_start_samples_var.get().strip()
+    end_text = self.loop_end_samples_var.get().strip()
+    if not start_text or not end_text:
+        start_s = float(self.loop_start_seconds_var.get().strip() or '0')
+        end_s = float(self.loop_end_seconds_var.get().strip() or '0')
+        loop_start = _ca_seconds_to_samples(start_s, sample_rate)
+        loop_end = _ca_seconds_to_samples(end_s, sample_rate)
+    else:
+        loop_start = int(start_text)
+        loop_end = int(end_text)
+    if not (0 <= loop_start < loop_end <= preview['fsb_info']['sample_count']):
+        raise ToolError('Loop points must satisfy 0 <= start < end <= sample_count.')
+    patched = self.backend.patch_fsb_loop_bytes(preview['fsb_bytes'], loop_start, loop_end)
+    combined_audio_path = Path(self.archive_path.get())
+    output_text = self.archive_out_path.get().strip()
+    output_path = Path(output_text) if output_text else combined_audio_path
+    result = self.backend.update_combinedaudio_entry(combined_audio_path, table_index, new_blob=patched, output_path=output_path)
+    self.archive_path.set(str(result))
+    self._archive_preview_cache.clear()
+    self._load_archive_table()
+    return f'Applied loop edit to entry #{table_index}: {loop_start} -> {loop_end}.'
+
+
+def _gui_save_selected_metadata(self):
+    table_index = self._gui_get_selected_archive_table_index()
+    preview = self._gui_prepare_preview_for_table_index(table_index)
+    combined_audio_path = Path(self.archive_path.get())
+    output_text = self.archive_out_path.get().strip()
+    output_path = Path(output_text) if output_text else combined_audio_path
+    new_blob = preview['fsb_bytes']
+    new_name = self.meta_embedded_name_var.get().strip()
+    if new_name and new_name != (preview['fsb_info'].get('embedded_name') or ''):
+        new_blob = self.backend.try_patch_embedded_name(new_blob, new_name)
+    new_sound_id = int(self.meta_sound_id_var.get().strip()) if self.meta_sound_id_var.get().strip() else None
+    result = self.backend.update_combinedaudio_entry(combined_audio_path, table_index, new_blob=new_blob, new_sound_id=new_sound_id, output_path=output_path)
+    self.archive_path.set(str(result))
+    side = self._gui_load_sidecar()
+    side['entries'][str(table_index)] = {'alias': self.meta_alias_var.get().strip(), 'notes': self.meta_notes_var.get().strip()}
+    sidecar_path = self._gui_save_sidecar()
+    self._archive_preview_cache.clear()
+    self._load_archive_table()
+    return f'Saved metadata for entry #{table_index}. Sidecar: {sidecar_path}'
+
+
+def _gui_on_archive_drop(self, event):
+    data = event.data.strip()
+    if not data:
+        return
+    if data.startswith('{') and data.endswith('}'):
+        data = data[1:-1]
+    drop_path = Path(data)
+    if not drop_path.exists():
+        self.log(f'[Drag and Drop] Ignored drop path: {data}')
+        return
+    self.run_action('Drag and Drop Replace', lambda: self._replace_archive_selection_with_path(drop_path))
+
+
+def _gui_replace_archive_selection_with_path(self, drop_path: Path):
+    combined_audio_path = Path(self.archive_path.get())
+    table_index = self._gui_get_selected_archive_table_index()
+    preview = self._gui_prepare_preview_for_table_index(table_index)
+    new_blob = self.backend.build_replacement_fsb_from_source(preview['fsb_bytes'], drop_path)
+    new_info = self.backend.inspect_fsb_bytes_detailed(new_blob)
+    diff_text = self._gui_make_diff_summary(preview['fsb_info'], new_info, table_index, drop_path.name, len(preview['fsb_bytes']), len(new_blob))
+    if not messagebox.askyesno('Replacement diff', diff_text):
+        return 'Drag-and-drop replacement canceled.'
+    output_text = self.archive_out_path.get().strip()
+    output_path = Path(output_text) if output_text else combined_audio_path
+    result = self.backend.update_combinedaudio_entry(combined_audio_path, table_index, new_blob=new_blob, output_path=output_path)
+    self.archive_path.set(str(result))
+    self._archive_preview_cache.clear()
+    self._load_archive_table()
+    return f'Drag-and-drop replaced entry #{table_index} with {drop_path.name}.'
+
+
+def _gui_convert_wav_to_mode2_fsb(self):
+    wav_path = Path(self.convert_mode_wav_in.get().strip())
+    out_path = Path(self.convert_mode2_out.get().strip() or wav_path.with_suffix('.mode2.fsb'))
+    self.convert_mode2_out.set(str(out_path))
+    embedded_name = self.meta_embedded_name_var.get().strip() if getattr(self, 'meta_embedded_name_var', None) else ''
+    result = self.backend.build_mode2_fsb_from_wav(wav_path, out_path, embedded_name=embedded_name)
+    return f'Built Mode 2 PCM16 FSB: {result}'
+
+
+def _gui_convert_wav_to_mode6_fsb(self):
+    tpl = Path(self.convert_template_fsb.get().strip())
+    wav_path = Path(self.convert_mode_wav_in.get().strip())
+    out_path = Path(self.convert_mode6_out.get().strip() or wav_path.with_suffix('.mode6.fsb'))
+    self.convert_mode6_out.set(str(out_path))
+    result, note = self.backend.wrap_wav_into_fsb_auto(tpl, wav_path, out_path)
+    return f'Built Mode 6 GCADPCM FSB: {result} ({note})'
+
+
+def _gui_build_convert_tab(self, tab):
+    tab.columnconfigure(1, weight=1)
+    self.decode_in = tk.StringVar()
+    self.decode_out = tk.StringVar()
+    self.encode_in = tk.StringVar()
+    self.encode_out = tk.StringVar()
+    self.raw_fsb = tk.StringVar()
+    self.raw_dsp = tk.StringVar()
+    self.mode2_template_name = tk.StringVar()
+    self.mode2_wav = tk.StringVar()
+    self.mode2_out = tk.StringVar()
+    self.mode6_tpl = tk.StringVar()
+    self.mode6_wav = tk.StringVar()
+    self.mode6_out = tk.StringVar()
+    self.add_path_row(tab, 0, 'Decode input (.fsb or .dsp)', self.decode_in, filetypes=(("Audio Files", "*.fsb *.dsp"), ("All Files", "*.*")))
+    self.add_path_row(tab, 1, 'Decode output (.wav)', self.decode_out, filetypes=(("WAV Files", "*.wav"),), save=True, default_ext='.wav')
+    ttk.Button(tab, text='Decode to WAV', command=lambda: self.run_action('Decode to WAV', self._decode_to_wav)).grid(row=2, column=1, sticky='w', pady=(4, 10))
+    ttk.Separator(tab, orient='horizontal').grid(row=3, column=0, columnspan=3, sticky='ew', pady=10)
+    self.add_path_row(tab, 4, 'Encode input (.wav)', self.encode_in, filetypes=(("WAV Files", "*.wav *.wave"), ("All Files", "*.*")))
+    self.add_path_row(tab, 5, 'Encode output (.dsp)', self.encode_out, filetypes=(("DSP Files", "*.dsp"),), save=True, default_ext='.dsp')
+    ttk.Button(tab, text='Encode WAV to DSP', command=lambda: self.run_action('Encode WAV to DSP', self._encode_to_dsp)).grid(row=6, column=1, sticky='w', pady=(4, 10))
+    ttk.Button(tab, text='Encode WAV to Mono DSP', command=lambda: self.run_action('Encode WAV to Mono DSP', self._encode_to_mono_dsp)).grid(row=6, column=2, sticky='e', pady=(4, 10))
+    ttk.Separator(tab, orient='horizontal').grid(row=7, column=0, columnspan=3, sticky='ew', pady=10)
+    self.add_path_row(tab, 8, 'FSB for raw extract', self.raw_fsb, filetypes=(("FSB Files", "*.fsb"), ("All Files", "*.*")))
+    self.add_path_row(tab, 9, 'DSP for raw extract', self.raw_dsp, filetypes=(("DSP Files", "*.dsp"), ("All Files", "*.*")))
+    ttk.Button(tab, text='Extract raw payload from FSB', command=lambda: self.run_action('Extract Raw FSB Payload', self._extract_raw_fsb)).grid(row=10, column=1, sticky='w')
+    ttk.Button(tab, text='Extract raw payload from DSP', command=lambda: self.run_action('Extract Raw DSP Payload', self._extract_raw_dsp)).grid(row=10, column=2, sticky='e')
+    ttk.Separator(tab, orient='horizontal').grid(row=11, column=0, columnspan=3, sticky='ew', pady=10)
+    self.add_path_row(tab, 12, 'WAV → Mode 2 PCM16 FSB source', self.mode2_wav, filetypes=(("WAV Files", "*.wav *.wave"), ("All Files", "*.*")))
+    self.add_path_row(tab, 13, 'Mode 2 FSB output', self.mode2_out, filetypes=(("FSB Files", "*.fsb"),), save=True, default_ext='.fsb')
+    ttk.Button(tab, text='Build Mode 2 PCM16 FSB', command=lambda: self.run_action('Build Mode 2 PCM16 FSB', lambda: self.backend.build_mode2_fsb_from_wav(Path(self.mode2_wav.get()), Path(self.mode2_out.get() or Path(self.mode2_wav.get()).with_suffix('.mode2.fsb'))))).grid(row=14, column=1, sticky='w', pady=(4, 10))
+    self.add_path_row(tab, 15, 'Template FSB for Mode 6', self.mode6_tpl, filetypes=(("FSB Files", "*.fsb"), ("All Files", "*.*")))
+    self.add_path_row(tab, 16, 'WAV → Mode 6 source', self.mode6_wav, filetypes=(("WAV Files", "*.wav *.wave"), ("All Files", "*.*")))
+    self.add_path_row(tab, 17, 'Mode 6 FSB output', self.mode6_out, filetypes=(("FSB Files", "*.fsb"),), save=True, default_ext='.fsb')
+    ttk.Button(tab, text='Build Mode 6 GCADPCM FSB', command=lambda: self.run_action('Build Mode 6 GCADPCM FSB', lambda: self.backend.wrap_wav_into_fsb_auto(Path(self.mode6_tpl.get()), Path(self.mode6_wav.get()), Path(self.mode6_out.get() or Path(self.mode6_wav.get()).with_suffix('.mode6.fsb')))[0])).grid(row=18, column=1, sticky='w', pady=(4, 0))
+
+
+CAToolGUI._build_archive_tab = _gui_build_archive_tab
+CAToolGUI._draw_waveform = _gui_draw_waveform
+CAToolGUI._trim_wav_bytes = _gui_trim_wav_bytes
+CAToolGUI._update_seek_label = _gui_update_seek_label
+CAToolGUI._set_archive_summary = _gui_set_archive_summary
+CAToolGUI._gui_set_archive_summary = _gui_set_archive_summary
+CAToolGUI._gui_get_selected_archive_table_index = _gui_get_selected_archive_table_index
+CAToolGUI._gui_load_archive_table = _gui_load_archive_table
+CAToolGUI._gui_on_archive_tree_select = _gui_on_archive_tree_select
+CAToolGUI._gui_cleanup_preview_temp = _gui_cleanup_preview_temp
+CAToolGUI._gui_play_wav_bytes = _gui_play_wav_bytes
+CAToolGUI._gui_stop_playback = _gui_stop_playback
+CAToolGUI._gui_play_archive_selection = _gui_play_archive_selection
+CAToolGUI._gui_play_from_seek = _gui_play_from_seek
+CAToolGUI._gui_restart_preview_playback = _gui_restart_preview_playback
+CAToolGUI._gui_play_next_archive_entry = _gui_play_next_archive_entry
+CAToolGUI._gui_reload_archive_table = _gui_reload_archive_table
+CAToolGUI._gui_replace_archive_selection = _gui_replace_archive_selection
+CAToolGUI._gui_replace_archive_selection_with_path = _gui_replace_archive_selection_with_path
+CAToolGUI._gui_apply_loop_metadata_to_selected = _gui_apply_loop_metadata_to_selected
+CAToolGUI._gui_save_selected_metadata = _gui_save_selected_metadata
+CAToolGUI._gui_on_archive_drop = _gui_on_archive_drop
+CAToolGUI._gui_make_diff_summary = _gui_make_diff_summary
+CAToolGUI._get_selected_archive_table_index = _gui_get_selected_archive_table_index
+CAToolGUI._load_archive_table = _gui_load_archive_table
+CAToolGUI._on_archive_tree_select = _gui_on_archive_tree_select
+CAToolGUI._cleanup_preview_temp = _gui_cleanup_preview_temp
+CAToolGUI._play_wav_bytes = _gui_play_wav_bytes
+CAToolGUI._stop_playback = _gui_stop_playback
+CAToolGUI._play_archive_selection = _gui_play_archive_selection
+CAToolGUI._play_from_seek = _gui_play_from_seek
+CAToolGUI._restart_preview_playback = _gui_restart_preview_playback
+CAToolGUI._play_next_archive_entry = _gui_play_next_archive_entry
+CAToolGUI._reload_archive_table = _gui_reload_archive_table
+CAToolGUI._replace_archive_selection = _gui_replace_archive_selection
+CAToolGUI._replace_archive_selection_with_path = _gui_replace_archive_selection_with_path
+CAToolGUI._apply_loop_metadata_to_selected = _gui_apply_loop_metadata_to_selected
+CAToolGUI._save_selected_metadata = _gui_save_selected_metadata
+CAToolGUI._on_archive_drop = _gui_on_archive_drop
+CAToolGUI._make_diff_summary = _gui_make_diff_summary
+CAToolGUI._gui_init_archive_state = _gui_init_archive_state
+CAToolGUI._gui_load_sidecar = _gui_load_sidecar
+CAToolGUI._gui_save_sidecar = _gui_save_sidecar
+CAToolGUI._gui_sidecar_path = _gui_sidecar_path
+CAToolGUI._sidecar_path = _gui_sidecar_path
+CAToolGUI._convert_wav_to_mode2_fsb = _gui_convert_wav_to_mode2_fsb
+CAToolGUI._convert_wav_to_mode6_fsb = _gui_convert_wav_to_mode6_fsb
+CAToolGUI._build_convert_tab = _gui_build_convert_tab
+
+CAToolGUI._gui_cancel_playback_after = _gui_cancel_playback_after
+CAToolGUI._gui_draw_waveform = _gui_draw_waveform
+CAToolGUI._gui_prepare_preview_for_table_index = _gui_prepare_preview_for_table_index
+CAToolGUI._gui_trim_wav_bytes = _gui_trim_wav_bytes
+CAToolGUI._gui_update_seek_label = _gui_update_seek_label
+CAToolGUI._gui_convert_wav_to_mode2_fsb = _gui_convert_wav_to_mode2_fsb
+CAToolGUI._gui_convert_wav_to_mode6_fsb = _gui_convert_wav_to_mode6_fsb
 
 
 def main():

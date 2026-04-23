@@ -1,7 +1,8 @@
 import io, json, os, atexit, threading, struct, subprocess
-import tempfile, traceback, wave, copy, shutil, sys
+import tempfile, traceback, wave, copy, shutil, sys, re
 from tkinter import ttk, filedialog, messagebox
 from dataclasses import dataclass
+soundFileImportError = None
 from pathlib import Path
 import tkinter as tk
 import numpy as np
@@ -11,15 +12,21 @@ try:
 except Exception:
     winsound = None
 
+try:
+    import soundfile
+except ImportError:
+    soundFileImportError = "No 'libsoundfile' wrapper Found."
+
+
 APP_TITLE = "Cracko298's CATool GUI"
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.0"
 DSP_HEADER_SIZE = 0x60
 COMBINED_AUDIO_HEADER_SIZE = 0x1A2C
 COMBINED_AUDIO_ALIGNMENT = 0x20
 
 
 def resource_path(*parts: str) -> Path:
-    base = Path(__file__).resolve().parent
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return base.joinpath(*parts)
 
 
@@ -1358,6 +1365,7 @@ class CAToolGUI(tk.Tk):
         self.backend = CAToolBackend()
         self._current_wav_bytes = None
         self.title(f"{APP_TITLE} v{APP_VERSION}")
+        self.iconbitmap(str(resource_path("icon.ico")))
         self._build_ui()
         self._lock_startup_window_size()
 
@@ -2782,10 +2790,232 @@ CAToolGUI._gui_convert_wav_to_mode2_fsb = _gui_convert_wav_to_mode2_fsb
 CAToolGUI._gui_convert_wav_to_mode6_fsb = _gui_convert_wav_to_mode6_fsb
 
 
+
+try:
+    import soundfile as sf
+except Exception:
+    sf = None
+
+
+SOUNDFILE_COMPRESSED_SUFFIXES = {'.ogg', '.oga', '.opus', '.flac', '.mp3'}
+
+
+def _backend_require_soundfile(self, suffix_hint: str = ''):
+    if sf is None:
+        extra = f" for {suffix_hint}" if suffix_hint else ''
+        raise ToolError(
+            'Compressed audio support requires the third-party Python module soundfile '
+            f'(libsndfile){extra}. Install soundfile to use these formats.'
+        )
+
+
+def _backend_decode_soundfile_bytes_to_wav_bytes(self, media_bytes: bytes, suffix_hint: str = '.bin') -> bytes:
+    self.require_soundfile(suffix_hint)
+    try:
+        with sf.SoundFile(io.BytesIO(media_bytes)) as snd:
+            pcm = snd.read(dtype='int16', always_2d=False)
+            sample_rate = int(snd.samplerate)
+            channels = int(snd.channels)
+    except Exception as exc:
+        raise ToolError(
+            f'soundfile/libsndfile could not decode {suffix_hint} audio. '
+            'That format may not be enabled in your local libsndfile build.'
+        ) from exc
+    if channels > 1 and getattr(pcm, 'ndim', 1) == 1:
+        pcm = np.reshape(pcm, (-1, channels))
+    return self._wav_bytes_from_pcm16(pcm, sample_rate)
+
+
+def _backend_inspect_soundfile_bytes(self, media_bytes: bytes, suffix_hint: str = '.bin'):
+    self.require_soundfile(suffix_hint)
+    try:
+        with sf.SoundFile(io.BytesIO(media_bytes)) as snd:
+            frames = int(len(snd))
+            sample_rate = int(snd.samplerate)
+            channels = int(snd.channels)
+            fmt = str(getattr(snd, 'format', '') or suffix_hint.lstrip('.').upper() or 'AUDIO')
+            subtype = str(getattr(snd, 'subtype', '') or 'UNKNOWN')
+    except Exception as exc:
+        raise ToolError(
+            f'soundfile/libsndfile could not inspect {suffix_hint} audio. '
+            'That format may not be enabled in your local libsndfile build.'
+        ) from exc
+    duration = (frames / sample_rate) if sample_rate else 0.0
+    return {
+        'kind': 'compressed_audio',
+        'format': fmt,
+        'subtype': subtype,
+        'mode_name': f'{fmt}/{subtype}',
+        'channels': channels,
+        'sample_rate': sample_rate,
+        'sample_count': frames,
+        'duration': duration,
+        'data_size': len(media_bytes),
+        'decoder': 'soundfile',
+    }
+
+
+def _backend_decode_audio_to_wav_bytes_with_soundfile(self, in_path: Path) -> bytes:
+    self.ensure_exists(in_path)
+    suffix = in_path.suffix.lower()
+    data = in_path.read_bytes()
+    if suffix in SOUNDFILE_COMPRESSED_SUFFIXES or data[:4] == b'OggS' or data[:4] == b'fLaC':
+        return self.decode_soundfile_bytes_to_wav_bytes(data, suffix or '.bin')
+    return _old_decode_audio_to_wav_bytes(self, in_path)
+
+
+def _backend_build_replacement_fsb_from_source_with_soundfile(self, template_fsb_bytes: bytes, replacement_path: Path) -> bytes:
+    self.ensure_exists(replacement_path)
+    suffix = replacement_path.suffix.lower()
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        template_path = td_path / 'template.fsb'
+        template_path.write_bytes(template_fsb_bytes)
+        if suffix == '.fsb':
+            blob = replacement_path.read_bytes()
+            if not blob.startswith(b'FSB5'):
+                raise ToolError('Selected replacement FSB is not a valid FSB5 file.')
+            return blob
+        if suffix in ('.wav', '.wave'):
+            out_fsb = td_path / 'replacement.fsb'
+            self.wrap_wav_into_fsb_auto(template_path, replacement_path, out_fsb)
+            return out_fsb.read_bytes()
+        if suffix in SOUNDFILE_COMPRESSED_SUFFIXES:
+            wav_path = td_path / ('replacement_from_' + suffix.lstrip('.') + '.wav')
+            wav_bytes = self.decode_soundfile_bytes_to_wav_bytes(replacement_path.read_bytes(), suffix)
+            wav_path.write_bytes(wav_bytes)
+            out_fsb = td_path / 'replacement.fsb'
+            self.wrap_wav_into_fsb_auto(template_path, wav_path, out_fsb)
+            return out_fsb.read_bytes()
+        if suffix == '.dsp':
+            out_fsb = td_path / 'replacement.fsb'
+            self.wrap_dsp_into_fsb(template_path, replacement_path, out_fsb)
+            return out_fsb.read_bytes()
+        raise ToolError('Replacement file must be .fsb, .wav, .wave, .ogg, .oga, .opus, .flac, .mp3, or .dsp')
+
+
+def _backend_inspect_audio_path_with_soundfile(self, path: Path):
+    self.ensure_exists(path)
+    data = path.read_bytes()
+    suffix = path.suffix.lower()
+    if suffix in SOUNDFILE_COMPRESSED_SUFFIXES or data[:4] == b'OggS' or data[:4] == b'fLaC':
+        return self.inspect_soundfile_bytes(data, suffix or '.bin')
+    return _old_inspect_audio_path(self, path)
+
+
+def _gui_replace_archive_selection_with_soundfile(self):
+    combined_audio_path = Path(self.archive_path.get())
+    table_index = self._gui_get_selected_archive_table_index()
+    replacement = filedialog.askopenfilename(filetypes=(("Supported Audio/FSB", "*.fsb *.wav *.wave *.ogg *.oga *.opus *.flac *.mp3 *.dsp"), ("All Files", "*.*")))
+    if not replacement:
+        return 'Replacement canceled.'
+    preview = self._gui_prepare_preview_for_table_index(table_index)
+    template_fsb = preview['fsb_bytes']
+    new_blob = self.backend.build_replacement_fsb_from_source(template_fsb, Path(replacement))
+    new_info = self.backend.inspect_fsb_bytes_detailed(new_blob)
+    current_size = len(template_fsb)
+    diff_text = self._gui_make_diff_summary(preview['fsb_info'], new_info, table_index, Path(replacement).name, current_size, len(new_blob))
+    if not messagebox.askyesno('Replacement diff', diff_text):
+        return 'Replacement canceled after diff review.'
+    output_text = self.archive_out_path.get().strip()
+    output_path = Path(output_text) if output_text else combined_audio_path
+    result = self.backend.update_combinedaudio_entry(combined_audio_path, table_index, new_blob=new_blob, output_path=output_path)
+    self.archive_path.set(str(result))
+    self._archive_preview_cache.clear()
+    self._load_archive_table()
+    return f'Replaced CombinedAudio table entry #{table_index} using {Path(replacement).name} and reloaded: {result}'
+
+
+def _gui_replace_archive_selection_with_path_with_soundfile(self, drop_path: Path):
+    combined_audio_path = Path(self.archive_path.get())
+    table_index = self._gui_get_selected_archive_table_index()
+    preview = self._gui_prepare_preview_for_table_index(table_index)
+    new_blob = self.backend.build_replacement_fsb_from_source(preview['fsb_bytes'], drop_path)
+    new_info = self.backend.inspect_fsb_bytes_detailed(new_blob)
+    diff_text = self._gui_make_diff_summary(preview['fsb_info'], new_info, table_index, drop_path.name, len(preview['fsb_bytes']), len(new_blob))
+    if not messagebox.askyesno('Replacement diff', diff_text):
+        return 'Drag-and-drop replacement canceled.'
+    output_text = self.archive_out_path.get().strip()
+    output_path = Path(output_text) if output_text else combined_audio_path
+    result = self.backend.update_combinedaudio_entry(combined_audio_path, table_index, new_blob=new_blob, output_path=output_path)
+    self.archive_path.set(str(result))
+    self._archive_preview_cache.clear()
+    self._load_archive_table()
+    return f'Drag-and-drop replaced entry #{table_index} with {drop_path.name}.'
+
+
+_old_decode_audio_to_wav_bytes = CAToolBackend.decode_audio_to_wav_bytes
+_old_inspect_audio_path = CAToolBackend.inspect_audio_path
+CAToolBackend.require_soundfile = _backend_require_soundfile
+CAToolBackend.decode_soundfile_bytes_to_wav_bytes = _backend_decode_soundfile_bytes_to_wav_bytes
+CAToolBackend.inspect_soundfile_bytes = _backend_inspect_soundfile_bytes
+CAToolBackend.decode_audio_to_wav_bytes = _backend_decode_audio_to_wav_bytes_with_soundfile
+CAToolBackend.build_replacement_fsb_from_source = _backend_build_replacement_fsb_from_source_with_soundfile
+CAToolBackend.inspect_audio_path = _backend_inspect_audio_path_with_soundfile
+CAToolGUI._gui_replace_archive_selection = _gui_replace_archive_selection_with_soundfile
+CAToolGUI._replace_archive_selection = _gui_replace_archive_selection_with_soundfile
+CAToolGUI._gui_replace_archive_selection_with_path = _gui_replace_archive_selection_with_path_with_soundfile
+CAToolGUI._replace_archive_selection_with_path = _gui_replace_archive_selection_with_path_with_soundfile
+
+def _maybe_prompt_install_soundfile_for_script_run():
+    if soundFileImportError is None:
+        return
+    if getattr(sys, 'frozen', False):
+        return
+    try:
+        source_path = Path(__file__)
+    except Exception:
+        return
+    if source_path.suffix.lower() != '.py':
+        return
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        extra = ''
+        if soundFileImportError is not None:
+            extra = f'\n\nCurrent import error:\n{soundFileImportError}'
+        msg = (
+            'This Python script can use the optional soundfile module for compressed audio '
+            'formats like OGG/FLAC/MP3. soundfile is not installed right now.\n\n'
+            'Would you like CATool to try installing soundfile with pip now?' + extra
+        )
+        should_install = messagebox.askyesno('Install soundfile?', msg, parent=root)
+        if not should_install:
+            return
+        try:
+            result = subprocess.run(
+                [sys.executable, '-m', 'pip', 'install', 'soundfile'],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            details = (exc.stderr or exc.stdout or str(exc)).strip()
+            messagebox.showerror(
+                'soundfile install failed',
+                'CATool could not install soundfile automatically.\n\n' + details,
+                parent=root,
+            )
+            return
+
+        message = (result.stdout or result.stderr or 'soundfile installed successfully.').strip()
+        messagebox.showinfo(
+            'soundfile installed',
+            'soundfile was installed successfully. Please restart CATool so the new module can be loaded.\n\n' + message,
+            parent=root,
+        )
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
 def main():
     app = CAToolGUI()
     app.mainloop()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
+    _maybe_prompt_install_soundfile_for_script_run()
     main()

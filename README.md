@@ -10,7 +10,7 @@
 - Convert Songs, Add SFX, and Extract Segments/Header information.
 
 ## Download(s):
-- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v2.5/CATool.exe).
+- Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v2.6/CATool.exe).
 - Requires `Python 3.12+` and `Python STD` (Installed alongside Python).
 
 ## Building:

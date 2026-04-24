@@ -112,7 +112,7 @@ For **replacing existing sounds with different lengths**, only three outer-archi
 
 ---- 
 
-- View the workflow Flowchart [Here]()
+- View the workflow Flowchart [Here](https://github.com/Cracko298/CombinedAudioTool/blob/main/FLOWCHART.md)
 
 ## Code Example:
 
@@ -161,10 +161,8 @@ def parse_combined_audio_header_bytes(self, blob: bytes) -> CombinedAudioHeader:
             )
         )
 
-    # File order is not header order; recover it by offset.
     entries_by_offset = sorted(entries, key=lambda e: e.offset)
 
-    # Validate contiguous archive layout.
     expected_offset = 0
     for entry in entries_by_offset:
         if entry.offset != expected_offset:
@@ -197,7 +195,6 @@ def _pack_combined_audio_header(self, header: CombinedAudioHeader) -> bytes:
     out = bytearray(4 + (header.entry_count * 12))
     struct.pack_into("<I", out, 0, header.entry_count)
 
-    # Preserve original header order.
     for entry in header.entries:
         struct.pack_into(
             "<III",
@@ -318,14 +315,12 @@ def rebuild_combined_audio(self, segment_dir: Path, output_path: Path):
     payloads: list[bytes] = []
     running_offset = 0
 
-    # Match segment_0..N to the original file order, not header order.
     file_order_entries = sorted(original_header.entries, key=lambda e: e.offset)
 
     for entry, seg_path in zip(file_order_entries, segment_files):
         blob = seg_path.read_bytes()
         fsb_total_size = self._get_fsb_total_size(blob)
 
-        # Strip any accidental trailing junk, then repad in a controlled way.
         blob = blob[:fsb_total_size]
         blob = self._align_blob(blob, COMBINED_AUDIO_ALIGNMENT)
 

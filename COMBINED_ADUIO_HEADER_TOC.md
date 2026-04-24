@@ -1,17 +1,15 @@
-# Deciphering CombinedAudio.bin and Automating Variable-Length Rebuilds in CATool
+## Deciphering CombinedAudio's Header/TOC and Automating Variable-Length Rebuilds with CATool
 
-## Executive summary
-- The header/toc size is calculated by this formula: `header_size = 4 + entry_count * 12`.
-- Parse the archive header first, then extract and rebuild by **header entries**, not by scanning for `FSB5`, like CATool did previously.
-- Preserve each entry’s first 32-bit value as a stable sound/resource key, which is very likely a hash.
-- Recompute every entry’s **relative offset** and **stored size** from the actual rebuilt FSB blobs.
-- Validate the rebuilt archive by confirming that every entry points to `FSB5` at `header_size + offset` and that each segment length matches the inner FSB’s own declared total size.
+----
 
 ## Observed archive structure
+- The header/toc size is calculated by this formula: `header_size = 4 + entry_count * 12`.
 - The outer CombinedAudio header is consistent and unusually simple. It has no visible archive magic, no visible version field, and no visible outer checksum.
 - The header begins with a 32-bit little-endian entry count, followed immediately by a flat table of 12-byte records.
 - In the archive, the table covers 558 segments, and the sum of all stored sizes exactly equals the file length minus the computed header size.
 - Every stored segment begins at `header_size + offset`, every stored segment starts with `FSB5`, and every stored segment size matches the exact total length implied by its inner FSB header.
+- And validate the rebuilt archive by confirming that every entry points to `FSB5` at `header_size + offset` and that each segment length matches the inner FSB’s own declared total size.
+- We can parse the archive header first, then extract and rebuild by **header entries**, not by scanning for `FSB5`, like CATool did previously.
 
 ### Hex-offset table
 

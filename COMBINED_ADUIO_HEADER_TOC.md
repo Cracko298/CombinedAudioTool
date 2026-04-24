@@ -1,9 +1,9 @@
 # Deciphering CombinedAudio.bin and Automating Variable-Length Rebuilds in CATool
 
 ## Executive summary
-- Replace the fixed `COMBINED_AUDIO_HEADER_SIZE = 0x1A2C` assumption with `header_size = 4 + entry_count * 12`.
-- Parse the archive header first, then extract and rebuild by **header entries**, not by scanning for `FSB5`.
-- Preserve each entry’s first 32-bit value as a stable sound/resource key.
+- The header/toc size is calculated by this formula: `header_size = 4 + entry_count * 12`.
+- Parse the archive header first, then extract and rebuild by **header entries**, not by scanning for `FSB5`, like CATool did previously.
+- Preserve each entry’s first 32-bit value as a stable sound/resource key, which is very likely a hash.
 - Recompute every entry’s **relative offset** and **stored size** from the actual rebuilt FSB blobs.
 - Validate the rebuilt archive by confirming that every entry points to `FSB5` at `header_size + offset` and that each segment length matches the inner FSB’s own declared total size.
 

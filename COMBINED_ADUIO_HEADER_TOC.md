@@ -8,14 +8,14 @@
 - Validate the rebuilt archive by confirming that every entry points to `FSB5` at `header_size + offset` and that each segment length matches the inner FSB’s own declared total size.
 
 ## Observed archive structure
-- The outer CombinedAudio header in the uploaded sample is consistent and unusually simple. It has no visible archive magic, no visible version field, and no visible outer checksum.
+- The outer CombinedAudio header is consistent and unusually simple. It has no visible archive magic, no visible version field, and no visible outer checksum.
 - The header begins with a 32-bit little-endian entry count, followed immediately by a flat table of 12-byte records.
 - In the archive, the table covers 558 segments, and the sum of all stored sizes exactly equals the file length minus the computed header size.
 - Every stored segment begins at `header_size + offset`, every stored segment starts with `FSB5`, and every stored segment size matches the exact total length implied by its inner FSB header.
 
 ### Hex-offset table
 
-The following table is derived from direct analysis of the uploaded sample.
+The following table is derived from direct analysis of `CombinedAudio.bin`.
 
 | Offset | Size | Type | Semantics | Behavior |
 |---|---:|---|---|---|
@@ -37,7 +37,7 @@ header_size = 4 + 558 * 12 = 6700 = 0x1A2C
 
 ----
 
-- A raw hex example from the sample header shows the pattern immediately:
+- A raw hex example from the `CombinedAudio` header shows the pattern immediately:
 ```text
 0000  2e 02 00 00 74 f9 d5 00 e0 1d 2d 00 00 fd 00 00
       ^ count=0x022e  ^ id/key=0x00d5f974 ^ off=0x002d1de0 ^ size=0x0000fd00
@@ -45,8 +45,6 @@ header_size = 4 + 558 * 12 = 6700 = 0x1A2C
 
 - The first field is best interpreted as a lookup key rather than a position. 
 - Those values are unique and sorted ascending in header order, while the actual FSB file order is recovered only by sorting records by the second field.
-- That is also compatible with CATool’s own repo language, which exposes archive operations by "Hash/SoundID."
-
 - A second important observation is that the archive header is **relative**, not absolute. The real file start for each FSB is:
 ```text
 absolute_fsb_start = header_size + relative_offset
@@ -71,7 +69,7 @@ absolute_fsb_start = header_size + relative_offset
 | FSB5 | per-bank total data size, sample headers, channels/frequency/loop metadata, DSP coefficient chunks | must already be valid before you reinsert it into CombinedAudio |
 | Nintendo DSP | sample count, nibble count, loop nibble offsets, coefficients, predictor/history state | relevant only when generating or validating the inner DSP stream |
 
-The observed sample confirms this separation cleanly. For all 558 entries, `CombinedAudio.entry.size` matched:
+- `CombinedAusio.bin` confirms this separation cleanly. For all 558 entries, `CombinedAudio.entry.size` matched:
 
 ```text
 fsb_total_size = file_header_size + sampleHeaderSize + nameTableSize + dataSize

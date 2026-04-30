@@ -19,7 +19,7 @@ except ImportError:
 
 
 APP_TITLE = "Cracko298's CATool GUI"
-APP_VERSION = "2.7.0"
+APP_VERSION = "2.7.1"
 DSP_HEADER_SIZE = 0x60
 COMBINED_AUDIO_HEADER_SIZE = 0x1A2C
 COMBINED_AUDIO_ALIGNMENT = 0x20
@@ -2175,6 +2175,9 @@ def _gui_build_archive_tab(self, tab):
     self.convert_mode_wav_in = tk.StringVar()
     self.convert_mode2_out = tk.StringVar()
     self.convert_mode6_out = tk.StringVar()
+    self.archive_use_template_replacement_var = tk.BooleanVar(value=True)
+    self.archive_allow_stereo_replacement_var = tk.BooleanVar(value=True)
+    self.archive_force_mono_replacement_var = tk.BooleanVar(value=False)
 
     self.add_path_row(tab, 0, 'CombinedAudio.bin', self.archive_path, filetypes=(("BIN Files", "*.bin"), ("All Files", "*.*")))
     self.add_path_row(tab, 1, 'Replacement output (.bin, optional)', self.archive_out_path, filetypes=(("BIN Files", "*.bin"),), save=True, default_ext='.bin')
@@ -2191,6 +2194,9 @@ def _gui_build_archive_tab(self, tab):
         ('Copy all as TSV', lambda: self.run_action('Copy All Rows', self._copy_all_archive_rows)),
     ]:
         ttk.Button(btns, text=text, command=cmd).pack(side='left', padx=(0, 6))
+    ttk.Checkbutton(btns, text='Use selected FSB as template', variable=self.archive_use_template_replacement_var).pack(side='left', padx=(12, 0))
+    ttk.Checkbutton(btns, text='Allow stereo replacement', variable=self.archive_allow_stereo_replacement_var).pack(side='left', padx=(8, 0))
+    ttk.Checkbutton(btns, text='Force mono replacement', variable=self.archive_force_mono_replacement_var).pack(side='left', padx=(8, 0))
 
     content = ttk.Panedwindow(tab, orient='horizontal')
     content.grid(row=3, column=0, columnspan=3, sticky='nsew')
@@ -2583,7 +2589,13 @@ def _gui_replace_archive_selection(self):
         return 'Replacement canceled.'
     preview = self._gui_prepare_preview_for_table_index(table_index)
     template_fsb = preview['fsb_bytes']
-    new_blob = self.backend.build_replacement_fsb_from_source(template_fsb, Path(replacement))
+    new_blob = self.backend.build_replacement_fsb_from_source(
+        template_fsb,
+        Path(replacement),
+        use_template=bool(getattr(getattr(self, 'archive_use_template_replacement_var', None), 'get', lambda: True)()),
+        allow_stereo=bool(getattr(getattr(self, 'archive_allow_stereo_replacement_var', None), 'get', lambda: True)()),
+        force_mono=bool(getattr(getattr(self, 'archive_force_mono_replacement_var', None), 'get', lambda: False)()),
+    )
     new_info = self.backend.inspect_fsb_bytes_detailed(new_blob)
     current_size = len(template_fsb)
     diff_text = self._gui_make_diff_summary(preview['fsb_info'], new_info, table_index, Path(replacement).name, current_size, len(new_blob))
@@ -2663,7 +2675,13 @@ def _gui_replace_archive_selection_with_path(self, drop_path: Path):
     combined_audio_path = Path(self.archive_path.get())
     table_index = self._gui_get_selected_archive_table_index()
     preview = self._gui_prepare_preview_for_table_index(table_index)
-    new_blob = self.backend.build_replacement_fsb_from_source(preview['fsb_bytes'], drop_path)
+    new_blob = self.backend.build_replacement_fsb_from_source(
+        preview['fsb_bytes'],
+        drop_path,
+        use_template=bool(getattr(getattr(self, 'archive_use_template_replacement_var', None), 'get', lambda: True)()),
+        allow_stereo=bool(getattr(getattr(self, 'archive_allow_stereo_replacement_var', None), 'get', lambda: True)()),
+        force_mono=bool(getattr(getattr(self, 'archive_force_mono_replacement_var', None), 'get', lambda: False)()),
+    )
     new_info = self.backend.inspect_fsb_bytes_detailed(new_blob)
     diff_text = self._gui_make_diff_summary(preview['fsb_info'], new_info, table_index, drop_path.name, len(preview['fsb_bytes']), len(new_blob))
     if not messagebox.askyesno('Replacement diff', diff_text):
@@ -2911,7 +2929,13 @@ def _gui_replace_archive_selection_with_soundfile(self):
         return 'Replacement canceled.'
     preview = self._gui_prepare_preview_for_table_index(table_index)
     template_fsb = preview['fsb_bytes']
-    new_blob = self.backend.build_replacement_fsb_from_source(template_fsb, Path(replacement))
+    new_blob = self.backend.build_replacement_fsb_from_source(
+        template_fsb,
+        Path(replacement),
+        use_template=bool(getattr(getattr(self, 'archive_use_template_replacement_var', None), 'get', lambda: True)()),
+        allow_stereo=bool(getattr(getattr(self, 'archive_allow_stereo_replacement_var', None), 'get', lambda: True)()),
+        force_mono=bool(getattr(getattr(self, 'archive_force_mono_replacement_var', None), 'get', lambda: False)()),
+    )
     new_info = self.backend.inspect_fsb_bytes_detailed(new_blob)
     current_size = len(template_fsb)
     diff_text = self._gui_make_diff_summary(preview['fsb_info'], new_info, table_index, Path(replacement).name, current_size, len(new_blob))
@@ -2930,7 +2954,13 @@ def _gui_replace_archive_selection_with_path_with_soundfile(self, drop_path: Pat
     combined_audio_path = Path(self.archive_path.get())
     table_index = self._gui_get_selected_archive_table_index()
     preview = self._gui_prepare_preview_for_table_index(table_index)
-    new_blob = self.backend.build_replacement_fsb_from_source(preview['fsb_bytes'], drop_path)
+    new_blob = self.backend.build_replacement_fsb_from_source(
+        preview['fsb_bytes'],
+        drop_path,
+        use_template=bool(getattr(getattr(self, 'archive_use_template_replacement_var', None), 'get', lambda: True)()),
+        allow_stereo=bool(getattr(getattr(self, 'archive_allow_stereo_replacement_var', None), 'get', lambda: True)()),
+        force_mono=bool(getattr(getattr(self, 'archive_force_mono_replacement_var', None), 'get', lambda: False)()),
+    )
     new_info = self.backend.inspect_fsb_bytes_detailed(new_blob)
     diff_text = self._gui_make_diff_summary(preview['fsb_info'], new_info, table_index, drop_path.name, len(preview['fsb_bytes']), len(new_blob))
     if not messagebox.askyesno('Replacement diff', diff_text):
@@ -3835,6 +3865,115 @@ CAToolBackend.wrap_dsp_into_fsb = _backend_wrap_dsp_into_fsb_mode6_layout
 CAToolBackend.build_mode6_fsb_from_dsp = _backend_build_mode6_fsb_from_dsp_mode6_layout
 CAToolBackend._extract_fsb_decode_info = _backend_extract_fsb_decode_info_mode6_layout
 CAToolBackend.decode_fsb_bytes_to_wav_bytes = _backend_decode_fsb_bytes_to_wav_bytes_mode6_layout
+
+
+# --- CombinedAudio stereo replacement support patch ---
+# The editor previously treated the selected CombinedAudio entry as a hard
+# template. That meant replacing a mono entry with a stereo WAV/OGG/MP3/etc.
+# downmixed the source to mono. This replacement builder keeps template wrapping
+# when channel counts match, but can build a fresh stereo Mode 6 FSB when needed.
+def _backend_get_replacement_source_channels_for_archive(self, replacement_path: Path) -> int:
+    replacement_path = Path(replacement_path)
+    self.ensure_exists(replacement_path)
+    suffix = replacement_path.suffix.lower()
+    head = replacement_path.read_bytes()[:4]
+
+    if suffix == '.fsb' or head == b'FSB5':
+        return int(self.inspect_fsb_bytes_detailed(replacement_path.read_bytes())['channels'])
+    if suffix == '.dsp':
+        return int(self.read_dsp_header(replacement_path).channels)
+
+    with tempfile.TemporaryDirectory() as td:
+        wav_path, _note = self.prepare_audio_source_wav(replacement_path, Path(td))
+        with wave.open(str(wav_path), 'rb') as wf:
+            return int(wf.getnchannels())
+
+
+def _backend_build_replacement_fsb_from_source_archive_stereo(
+    self,
+    template_fsb_bytes: bytes,
+    replacement_path: Path,
+    *,
+    use_template: bool = True,
+    allow_stereo: bool = True,
+    force_mono: bool = False,
+) -> bytes:
+    self.ensure_exists(replacement_path)
+    replacement_path = Path(replacement_path)
+    suffix = replacement_path.suffix.lower()
+    embedded_name = _safe_fsb_name_from_path(replacement_path)
+
+    # Existing FSB replacements are already fully wrapped. Keep them unchanged
+    # except for the embedded name, so a prebuilt stereo FSB can be injected too.
+    head = replacement_path.read_bytes()[:4]
+    if suffix == '.fsb' or head == b'FSB5':
+        blob = replacement_path.read_bytes()
+        if not blob.startswith(b'FSB5'):
+            raise ToolError('Selected replacement FSB is not a valid FSB5 file.')
+        return self.set_fsb_embedded_name_bytes(blob, embedded_name)
+
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        template_path = td_path / 'template.fsb'
+        out_fsb = td_path / 'replacement.fsb'
+        template_path.write_bytes(template_fsb_bytes)
+
+        template_channels = 0
+        try:
+            template_channels = int(self.inspect_fsb_bytes_detailed(template_fsb_bytes)['channels'])
+        except Exception:
+            template_channels = 0
+
+        source_channels = self.get_replacement_source_channels_for_archive(replacement_path)
+
+        # When the old entry is mono and the new source is stereo, template
+        # wrapping would force a downmix. Build a fresh Mode 6 FSB instead.
+        should_use_template = bool(use_template)
+        if should_use_template and template_channels:
+            if force_mono and template_channels != 1:
+                should_use_template = False
+            elif (not force_mono) and template_channels != source_channels:
+                if source_channels > 1 and template_channels == 1 and not allow_stereo:
+                    force_mono = True
+                    should_use_template = True
+                else:
+                    should_use_template = False
+
+        source_for_build = replacement_path
+        if suffix == '.dsp' and force_mono and source_channels > 1:
+            # Downmixing a DSP safely means decoding to WAV, then re-encoding.
+            wav_path = td_path / f'{embedded_name}.decoded_for_mono.wav'
+            wav_path.write_bytes(self.decode_dsp_bytes_to_wav_bytes(replacement_path.read_bytes()))
+            source_for_build = wav_path
+
+        if should_use_template:
+            self.wrap_source_into_fsb(
+                source_for_build,
+                out_fsb,
+                template_fsb=template_path,
+                embedded_name=embedded_name,
+                force_mono=force_mono,
+            )
+        else:
+            self.wrap_source_into_fsb(
+                source_for_build,
+                out_fsb,
+                template_fsb=None,
+                embedded_name=embedded_name,
+                force_mono=force_mono,
+            )
+
+        new_blob = out_fsb.read_bytes()
+        new_info = self.inspect_fsb_bytes_detailed(new_blob)
+        if force_mono and int(new_info.get('channels', 0)) != 1:
+            raise ToolError('Force mono replacement was requested, but the built FSB is not mono.')
+        if (not force_mono) and source_channels > 1 and allow_stereo and int(new_info.get('channels', 0)) != source_channels:
+            raise ToolError('Stereo replacement was requested, but the built FSB did not preserve the source channel count.')
+        return new_blob
+
+
+CAToolBackend.get_replacement_source_channels_for_archive = _backend_get_replacement_source_channels_for_archive
+CAToolBackend.build_replacement_fsb_from_source = _backend_build_replacement_fsb_from_source_archive_stereo
 
 def main():
     app = CAToolGUI()

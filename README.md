@@ -12,7 +12,10 @@
 
 ## Download(s):
 - Download [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v2.7.1/CATool.exe).
-- Requires `Python 3.12+` and `Python STD` (Installed alongside Python).
+- Requires `Python 3.12+`
+  - `Python STD` (Installed alongside Python).
+  - `numpy`
+  - `soundfile` (libsoundfile Wrapper for Python).
 
 ## Building:
 - We package it using PyInstaller.

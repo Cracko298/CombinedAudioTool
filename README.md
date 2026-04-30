@@ -18,13 +18,17 @@
   - `numpy`
   - `soundfile` (libsoundfile Wrapper for Python).
 
+----
+
 ## Building:
-- We compile the `catool_fast.c` module with MSVC Python Build Tools:
+- Install Python's `SetupTools` and `Wheel` and then;
+- We compile the `catool_fast.c` module with `MSVC Python Build Tools`:
 ```
- py -3.14 setup_catool_fast.py build_ext --inplace
+py -3.14 -m pip install --upgrade pip setuptools wheel
+py -3.14 setup_catool_fast.py build_ext --inplace
 ```
 
-- We package it using PyInstaller.
+- Finally we package it using PyInstaller.
 ```
 py -3.14 -m PyInstaller --onefile --windowed --name CATool --icon icon.ico --add-binary "catool_fast.cp314-win_amd64.pyd;." --add-data "icon.ico;." CATool.py
 ```

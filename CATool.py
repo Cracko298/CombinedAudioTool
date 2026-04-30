@@ -19,7 +19,7 @@ except ImportError:
 
 
 APP_TITLE = "Cracko298's CATool GUI"
-APP_VERSION = "2.6.0"
+APP_VERSION = "2.6.0-fast"
 DSP_HEADER_SIZE = 0x60
 COMBINED_AUDIO_HEADER_SIZE = 0x1A2C
 COMBINED_AUDIO_ALIGNMENT = 0x20
@@ -2957,6 +2957,472 @@ CAToolGUI._replace_archive_selection = _gui_replace_archive_selection_with_sound
 CAToolGUI._gui_replace_archive_selection_with_path = _gui_replace_archive_selection_with_path_with_soundfile
 CAToolGUI._replace_archive_selection_with_path = _gui_replace_archive_selection_with_path_with_soundfile
 
+try:
+    import catool_fast as _catool_fast
+except Exception:
+    _catool_fast = None
+
+AUDIO_IMPORT_SUFFIXES = {'.wav', '.wave', '.mp3', '.ogg', '.oga', '.opus', '.flac'}
+AUDIO_OR_DSP_IMPORT_SUFFIXES = AUDIO_IMPORT_SUFFIXES | {'.dsp'}
+FSB_SOURCE_SUFFIXES = AUDIO_OR_DSP_IMPORT_SUFFIXES | {'.fsb'}
+
+
+def _safe_fsb_name_from_path(path: Path) -> str:
+    raw = Path(path).stem.strip() or 'sound'
+    raw = re.sub(r'[^A-Za-z0-9_.\- ]+', '_', raw)
+    raw = raw.strip(' .') or 'sound'
+    return raw[:255]
+
+
+def _backend_fast_codec_status(self):
+    return 'CATool "Fast" Backend Loaded' if _catool_fast is not None else 'CATool "Fast" Backend NOT Loaded'
+
+
+def _backend_set_fsb_embedded_name_bytes(self, fsb_bytes: bytes, new_name: str) -> bytes:
+    """Rebuild the FSB name table so the embedded name can be any safe length."""
+    name = (new_name or '').strip()
+    if not name:
+        return bytes(fsb_bytes)
+    name = re.sub(r'[^A-Za-z0-9_.\- ]+', '_', name).strip(' .') or 'sound'
+    name_bytes = name.encode('ascii', errors='ignore')[:255]
+    if not name_bytes:
+        return bytes(fsb_bytes)
+
+    blob = bytearray(fsb_bytes)
+    meta = self._parse_fsb_header(blob)
+    old_payload = bytes(blob[meta['data_off']:meta['data_off'] + meta['data_size']])
+    prefix = bytes(blob[:meta['name_table_off']])
+    name_table = name_bytes + b'\x00'
+    rebuilt = bytearray(prefix + name_table + old_payload)
+    struct.pack_into('<I', rebuilt, 0x10, len(name_table))
+    return bytes(rebuilt)
+
+
+def _backend_set_fsb_embedded_name(self, fsb_path: Path, new_name: str):
+    self.ensure_exists(fsb_path)
+    patched = self.set_fsb_embedded_name_bytes(Path(fsb_path).read_bytes(), new_name)
+    Path(fsb_path).write_bytes(patched)
+    return Path(fsb_path)
+
+
+def _backend_prepare_audio_source_wav(self, source_path: Path, temp_dir: Path):
+    """Return a 16-bit PCM WAV path for WAV/MP3/OGG/OGA/OPUS/FLAC input."""
+    source_path = Path(source_path)
+    self.ensure_exists(source_path)
+    suffix = source_path.suffix.lower()
+
+    if suffix in ('.wav', '.wave'):
+        try:
+            self._load_wav_pcm16(source_path)
+            return source_path, 'source WAV used directly'
+        except Exception:
+            pass
+
+    if suffix in AUDIO_IMPORT_SUFFIXES or suffix in ('.wav', '.wave'):
+        wav_bytes = self.decode_soundfile_bytes_to_wav_bytes(source_path.read_bytes(), suffix or '.bin')
+        out = Path(temp_dir) / f'{_safe_fsb_name_from_path(source_path)}.decoded.wav'
+        out.write_bytes(wav_bytes)
+        return out, f'{suffix or "audio"} decoded/normalized to 16-bit PCM WAV'
+
+    raise ToolError('Source must be .wav, .wave, .mp3, .ogg, .oga, .opus, or .flac')
+
+
+def _backend_encode_pcm_channel_to_dsp_fast(self, pcm: np.ndarray, sample_rate: int, loop_start=None, loop_end=None):
+    pcm = pcm.astype(np.int16, copy=False)
+    if _catool_fast is None:
+        return _old_encode_pcm_channel_to_dsp_for_fast(self, pcm, sample_rate, loop_start, loop_end)
+
+    coefs = self._estimate_dsp_coefs(pcm)
+    pcm_bytes = pcm.astype('<i2', copy=False).tobytes()
+    ls = -1 if loop_start is None else int(loop_start)
+    le = -1 if loop_end is None else int(loop_end)
+    try:
+        enc = dict(_catool_fast.encode_channel(pcm_bytes, coefs, ls, le))
+    except Exception:
+        return _old_encode_pcm_channel_to_dsp_for_fast(self, pcm, sample_rate, loop_start, loop_end)
+
+    enc['sample_rate'] = int(sample_rate)
+    enc['coeff_blob'] = b''.join(struct.pack('>hh', int(c1), int(c2)) for c1, c2 in coefs)
+    return enc
+
+
+def _backend_decode_dsp_channel_bytes_fast(self, payload: bytes, sample_count: int, coeff_pairs, hist1: int = 0, hist2: int = 0) -> np.ndarray:
+    if _catool_fast is None:
+        return _old_decode_dsp_channel_bytes_for_fast(self, payload, sample_count, coeff_pairs, hist1, hist2)
+    try:
+        pcm_bytes = _catool_fast.decode_channel(bytes(payload), int(sample_count), coeff_pairs, int(hist1), int(hist2))
+        return np.frombuffer(pcm_bytes, dtype='<i2').copy()
+    except Exception:
+        return _old_decode_dsp_channel_bytes_for_fast(self, payload, sample_count, coeff_pairs, hist1, hist2)
+
+
+def _backend_encode_audio_to_dsp(self, audio_path: Path, out_path: Path, force_mono: bool = False):
+    audio_path = Path(audio_path)
+    out_path = Path(out_path)
+    with tempfile.TemporaryDirectory() as td:
+        wav_path, _note = self.prepare_audio_source_wav(audio_path, Path(td))
+        data = self._encode_wav_to_dsp_bytes(wav_path, force_mono=force_mono)
+    out_path.write_bytes(data)
+    return out_path
+
+
+def _backend_encode_wav_to_dsp_any(self, wav_path: Path, out_path: Path):
+    return self.encode_audio_to_dsp(wav_path, out_path, force_mono=False)
+
+
+def _backend_encode_wav_to_mono_dsp_any(self, wav_path: Path, out_path: Path):
+    return self.encode_audio_to_dsp(wav_path, out_path, force_mono=True)
+
+
+def _backend_build_mode6_fsb_from_dsp(self, dsp_path: Path, out_path: Path, embedded_name: str = ''):
+    self.ensure_exists(dsp_path)
+    dsp = self.read_dsp_header(dsp_path)
+    dsp_bytes = Path(dsp_path).read_bytes()
+    payload = dsp_bytes[dsp.data_offset:]
+    if not payload:
+        raise ToolError('DSP contains no ADPCM payload.')
+
+    sample_mode = ((int(dsp.sample_count) & 0x3FFFFFFF) << 34) | 0x1
+    chunks = []
+    chunks.append((1, bytes([dsp.channels & 0xFF])))
+    chunks.append((2, struct.pack('<I', int(dsp.sample_rate))))
+    if dsp.loop_flag:
+        loop_start_samples = max(0, (int(dsp.loop_start) - 2) // 8 * 14)
+        loop_end_samples = max(0, ((int(dsp.loop_end) - 2) // 8 * 14) + 1)
+        chunks.append((3, struct.pack('<II', loop_start_samples, loop_end_samples)))
+    chunks.append((7, bytes(dsp.coeff_blob)))
+
+    sample_header = bytearray(struct.pack('<Q', sample_mode))
+    for i, (chunk_type, chunk_data) in enumerate(chunks):
+        next_flag = 1 if i < len(chunks) - 1 else 0
+        sample_header += _ca_chunk_header(chunk_type, len(chunk_data), next_flag) + chunk_data
+
+    name = (embedded_name or _safe_fsb_name_from_path(dsp_path)).strip()
+    name_table = name.encode('ascii', errors='ignore')[:255] + b'\x00' if name else b''
+    header_size = 64
+    header = bytearray(header_size)
+    header[:4] = b'FSB5'
+    struct.pack_into('<IIIIII', header, 4, 0, 1, len(sample_header), len(name_table), len(payload), 6)
+    out = bytes(header) + bytes(sample_header) + name_table + payload
+    Path(out_path).write_bytes(out)
+    return Path(out_path)
+
+
+def _backend_build_mode6_fsb_from_audio_source(self, audio_path: Path, out_path: Path, template_fsb: Path = None, embedded_name: str = '', force_mono: bool = False):
+    audio_path = Path(audio_path)
+    out_path = Path(out_path)
+    name = (embedded_name or _safe_fsb_name_from_path(audio_path)).strip()
+    template_text = str(template_fsb).strip() if template_fsb is not None else ''
+    if template_text:
+        result, note = self.wrap_wav_into_fsb_auto(Path(template_text), audio_path, out_path, embedded_name=name, force_mono=force_mono)
+        return result, note
+    with tempfile.TemporaryDirectory() as td:
+        dsp_path = Path(td) / f'{_safe_fsb_name_from_path(audio_path)}.dsp'
+        self.encode_audio_to_dsp(audio_path, dsp_path, force_mono=force_mono)
+        result = self.build_mode6_fsb_from_dsp(dsp_path, out_path, embedded_name=name)
+    return result, 'built no-template Mode 6 GCADPCM FSB from generated DSP'
+
+
+def _backend_build_mode2_fsb_from_audio_source(self, audio_path: Path, out_path: Path, embedded_name: str = ''):
+    audio_path = Path(audio_path)
+    out_path = Path(out_path)
+    name = embedded_name or _safe_fsb_name_from_path(audio_path)
+    with tempfile.TemporaryDirectory() as td:
+        wav_path, note = self.prepare_audio_source_wav(audio_path, Path(td))
+        result = _old_build_mode2_fsb_from_wav_for_audio_source(self, wav_path, out_path, embedded_name=name)
+    return result, note
+
+
+def _backend_wrap_wav_into_fsb_auto_any(self, template_fsb: Path, audio_path: Path, out_path: Path, embedded_name: str = '', force_mono: bool = False):
+    template_fsb = Path(template_fsb)
+    audio_path = Path(audio_path)
+    out_path = Path(out_path)
+    self.ensure_exists(template_fsb)
+    name = (embedded_name or _safe_fsb_name_from_path(audio_path)).strip()
+    with tempfile.TemporaryDirectory() as td:
+        wav_path, decode_note = self.prepare_audio_source_wav(audio_path, Path(td))
+        info = self.inspect_fsb_template(template_fsb)
+        dsp_path = Path(td) / f'{_safe_fsb_name_from_path(audio_path)}.dsp'
+        if info['channels'] == 1:
+            self.encode_audio_to_dsp(wav_path, dsp_path, force_mono=True)
+            mode_note = 'template is mono, so the source was encoded as mono DSP'
+        elif info['channels'] == 2:
+            self.encode_audio_to_dsp(wav_path, dsp_path, force_mono=force_mono)
+            mode_note = 'template is stereo, so the source was encoded as stereo DSP' if not force_mono else 'source was forced to mono before template wrapping'
+        else:
+            raise ToolError(f'Unsupported template channel count for auto-wrap: {info["channels"]}')
+        self.wrap_dsp_into_fsb(template_fsb, dsp_path, out_path)
+    if name:
+        patched = self.set_fsb_embedded_name_bytes(Path(out_path).read_bytes(), name)
+        Path(out_path).write_bytes(patched)
+    fast_note = self.fast_codec_status()
+    return Path(out_path), f'{decode_note}; {mode_note}; embedded name="{name}"; {fast_note}'
+
+
+def _backend_wrap_source_into_fsb(self, source_path: Path, out_path: Path, template_fsb: Path = None, embedded_name: str = '', force_mono: bool = False):
+    source_path = Path(source_path)
+    suffix = source_path.suffix.lower()
+    name = embedded_name or _safe_fsb_name_from_path(source_path)
+    template_text = str(template_fsb).strip() if template_fsb is not None else ''
+    if suffix == '.fsb':
+        blob = source_path.read_bytes()
+        if not blob.startswith(b'FSB5'):
+            raise ToolError('Selected .fsb source is not an FSB5 file.')
+        blob = self.set_fsb_embedded_name_bytes(blob, name)
+        Path(out_path).write_bytes(blob)
+        return Path(out_path), f'copied existing FSB and set embedded name="{name}"'
+    if suffix == '.dsp':
+        if template_text:
+            self.wrap_dsp_into_fsb(Path(template_text), source_path, out_path)
+            patched = self.set_fsb_embedded_name_bytes(Path(out_path).read_bytes(), name)
+            Path(out_path).write_bytes(patched)
+            return Path(out_path), f'wrapped DSP into template FSB; embedded name="{name}"'
+        result = self.build_mode6_fsb_from_dsp(source_path, out_path, embedded_name=name)
+        return result, f'built no-template Mode 6 GCADPCM FSB from DSP; embedded name="{name}"'
+    return self.build_mode6_fsb_from_audio_source(source_path, out_path, template_fsb=Path(template_text) if template_text else None, embedded_name=name, force_mono=force_mono)
+
+
+def _backend_build_replacement_fsb_from_source_any(self, template_fsb_bytes: bytes, replacement_path: Path) -> bytes:
+    self.ensure_exists(replacement_path)
+    suffix = replacement_path.suffix.lower()
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        out_fsb = td_path / 'replacement.fsb'
+        template_path = td_path / 'template.fsb'
+        template_path.write_bytes(template_fsb_bytes)
+        if suffix == '.fsb':
+            blob = replacement_path.read_bytes()
+            if not blob.startswith(b'FSB5'):
+                raise ToolError('Selected replacement FSB is not a valid FSB5 file.')
+            return self.set_fsb_embedded_name_bytes(blob, _safe_fsb_name_from_path(replacement_path))
+        self.wrap_source_into_fsb(replacement_path, out_fsb, template_fsb=template_path, embedded_name=_safe_fsb_name_from_path(replacement_path))
+        return out_fsb.read_bytes()
+
+
+def _gui_audio_filetypes():
+    return (("Supported audio", "*.wav *.wave *.mp3 *.ogg *.oga *.opus *.flac"), ("All Files", "*.*"))
+
+
+def _gui_audio_dsp_filetypes():
+    return (("Supported audio/DSP", "*.wav *.wave *.mp3 *.ogg *.oga *.opus *.flac *.dsp"), ("All Files", "*.*"))
+
+
+def _gui_audio_fsb_filetypes():
+    return (("Supported audio/DSP/FSB", "*.wav *.wave *.mp3 *.ogg *.oga *.opus *.flac *.dsp *.fsb"), ("All Files", "*.*"))
+
+
+def _gui_build_convert_tab_fast(self, tab):
+    tab.columnconfigure(1, weight=1)
+    self.decode_in = tk.StringVar()
+    self.decode_out = tk.StringVar()
+    self.encode_in = tk.StringVar()
+    self.encode_out = tk.StringVar()
+    self.raw_fsb = tk.StringVar()
+    self.raw_dsp = tk.StringVar()
+    self.convert_fsb_source = tk.StringVar()
+    self.convert_fsb_template = tk.StringVar()
+    self.convert_fsb_out = tk.StringVar()
+    self.convert_fsb_name = tk.StringVar()
+    self.convert_force_mono_var = tk.BooleanVar(value=False)
+    self.mode2_wav = self.convert_fsb_source
+    self.mode2_out = tk.StringVar()
+    self.mode6_tpl = self.convert_fsb_template
+    self.mode6_wav = self.convert_fsb_source
+    self.mode6_out = self.convert_fsb_out
+
+    ttk.Label(tab, text=f'Codec Acceleration: {self.backend.fast_codec_status()}').grid(row=0, column=0, columnspan=3, sticky='w', pady=(0, 8))
+    self.add_path_row(tab, 1, 'Decode input (.fsb/.dsp/audio)', self.decode_in, filetypes=_gui_audio_fsb_filetypes())
+    self.add_path_row(tab, 2, 'Decode output (.wav)', self.decode_out, filetypes=(("WAV Files", "*.wav"),), save=True, default_ext='.wav')
+    ttk.Button(tab, text='Decode to WAV', command=lambda: self.run_action('Decode to WAV', self._decode_to_wav)).grid(row=3, column=1, sticky='w', pady=(4, 10))
+
+    ttk.Separator(tab, orient='horizontal').grid(row=4, column=0, columnspan=3, sticky='ew', pady=10)
+    self.add_path_row(tab, 5, 'Encode source audio → DSP', self.encode_in, filetypes=_gui_audio_filetypes())
+    self.add_path_row(tab, 6, 'DSP output (.dsp)', self.encode_out, filetypes=(("DSP Files", "*.dsp"),), save=True, default_ext='.dsp')
+    ttk.Button(tab, text='Encode to DSP', command=lambda: self.run_action('Encode Audio to DSP', self._encode_to_dsp)).grid(row=7, column=1, sticky='w', pady=(4, 10))
+    ttk.Button(tab, text='Encode to Mono DSP', command=lambda: self.run_action('Encode Audio to Mono DSP', self._encode_to_mono_dsp)).grid(row=7, column=2, sticky='e', pady=(4, 10))
+
+    ttk.Separator(tab, orient='horizontal').grid(row=8, column=0, columnspan=3, sticky='ew', pady=10)
+    self.add_path_row(tab, 9, 'FSB source audio/DSP', self.convert_fsb_source, filetypes=_gui_audio_dsp_filetypes())
+    self.add_path_row(tab, 10, 'Optional template FSB', self.convert_fsb_template, filetypes=(("FSB Files", "*.fsb"), ("All Files", "*.*")))
+    self.add_path_row(tab, 11, 'FSB output (.fsb)', self.convert_fsb_out, filetypes=(("FSB Files", "*.fsb"),), save=True, default_ext='.fsb')
+    ttk.Label(tab, text='Embedded name').grid(row=12, column=0, sticky='w', padx=(0, 8), pady=4)
+    ttk.Entry(tab, textvariable=self.convert_fsb_name).grid(row=12, column=1, sticky='ew', pady=4)
+    ttk.Checkbutton(tab, text='Force mono DSP', variable=self.convert_force_mono_var).grid(row=12, column=2, sticky='e', pady=4)
+    ttk.Button(tab, text='Build GCADPCM FSB', command=lambda: self.run_action('Build GCADPCM FSB', self._convert_audio_to_mode6_fsb)).grid(row=13, column=1, sticky='w', pady=(4, 10))
+    ttk.Button(tab, text='Build Mode 2 PCM16 FSB', command=lambda: self.run_action('Build Mode 2 PCM16 FSB', self._convert_audio_to_mode2_fsb)).grid(row=13, column=2, sticky='e', pady=(4, 10))
+
+    ttk.Separator(tab, orient='horizontal').grid(row=14, column=0, columnspan=3, sticky='ew', pady=10)
+    self.add_path_row(tab, 15, 'FSB for raw extract', self.raw_fsb, filetypes=(("FSB Files", "*.fsb"), ("All Files", "*.*")))
+    self.add_path_row(tab, 16, 'DSP for raw extract', self.raw_dsp, filetypes=(("DSP Files", "*.dsp"), ("All Files", "*.*")))
+    ttk.Button(tab, text='Extract raw payload from FSB', command=lambda: self.run_action('Extract Raw FSB Payload', self._extract_raw_fsb)).grid(row=17, column=1, sticky='w')
+    ttk.Button(tab, text='Extract raw payload from DSP', command=lambda: self.run_action('Extract Raw DSP Payload', self._extract_raw_dsp)).grid(row=17, column=2, sticky='e')
+
+
+def _gui_build_wrap_tab_fast(self, tab):
+    tab.columnconfigure(1, weight=1)
+    self.template_fsb = tk.StringVar()
+    self.wrap_dsp = tk.StringVar()
+    self.wrap_wav = self.wrap_dsp
+    self.wrap_out = tk.StringVar()
+    self.wrap_embed_name = tk.StringVar()
+    self.wrap_use_template_var = tk.BooleanVar(value=True)
+    self.wrap_force_mono_var = tk.BooleanVar(value=False)
+    note = (
+        'Source can be DSP, WAV, MP3, OGG, OGA, OPUS, or FLAC. '
+        'When a template FSB is used, the tool preserves the template layout/chunks. '
+        'Without a template, it builds a fresh Mode 6 GCADPCM FSB from the encoded DSP. '
+        'The embedded FSB name defaults to the source filename without its extension.'
+    )
+    ttk.Label(tab, text=note, wraplength=980, justify='left').grid(row=0, column=0, columnspan=3, sticky='w', pady=(0, 10))
+    ttk.Label(tab, text=f'Codec acceleration: {self.backend.fast_codec_status()}').grid(row=1, column=0, columnspan=3, sticky='w', pady=(0, 8))
+    self.add_path_row(tab, 2, 'Template FSB (.fsb, optional)', self.template_fsb, filetypes=(("FSB Files", "*.fsb"), ("All Files", "*.*")))
+    self.add_path_row(tab, 3, 'Source audio/DSP', self.wrap_dsp, filetypes=_gui_audio_dsp_filetypes())
+    self.add_path_row(tab, 4, 'Output FSB (.fsb)', self.wrap_out, filetypes=(("FSB Files", "*.fsb"),), save=True, default_ext='.fsb')
+    ttk.Label(tab, text='Embedded name').grid(row=5, column=0, sticky='w', padx=(0, 8), pady=4)
+    ttk.Entry(tab, textvariable=self.wrap_embed_name).grid(row=5, column=1, sticky='ew', pady=4)
+    opts = ttk.Frame(tab)
+    opts.grid(row=5, column=2, sticky='e', pady=4)
+    ttk.Checkbutton(opts, text='Use template', variable=self.wrap_use_template_var).pack(side='left')
+    ttk.Checkbutton(opts, text='Force mono', variable=self.wrap_force_mono_var).pack(side='left', padx=(8, 0))
+    ttk.Button(tab, text='Build FSB from source', command=lambda: self.run_action('Source → FSB', self._wrap_source_into_fsb_auto)).grid(row=6, column=1, sticky='w', pady=(8, 0))
+    ttk.Button(tab, text='Autofill output/name', command=self._autofill_wrap_name).grid(row=6, column=2, sticky='e', pady=(8, 0))
+
+
+def _gui_decode_to_wav_any(self):
+    out = Path(self.decode_out.get())
+    if not str(out).strip():
+        out = Path(self.decode_in.get()).with_suffix('.wav')
+        self.decode_out.set(str(out))
+    result = self.backend.decode_to_wav(Path(self.decode_in.get()), out)
+    return f'Decoded to: {result}'
+
+
+def _gui_encode_to_dsp_any(self):
+    source = Path(self.encode_in.get())
+    out = Path(self.encode_out.get())
+    if not str(out).strip():
+        out = source.with_suffix('.dsp')
+        self.encode_out.set(str(out))
+    result = self.backend.encode_audio_to_dsp(source, out, force_mono=False)
+    return f'Encoded DSP: {result} ({self.backend.fast_codec_status()})'
+
+
+def _gui_encode_to_mono_dsp_any(self):
+    source = Path(self.encode_in.get())
+    out = Path(self.encode_out.get())
+    if not str(out).strip():
+        out = source.with_suffix('.mono.dsp')
+        self.encode_out.set(str(out))
+    result = self.backend.encode_audio_to_dsp(source, out, force_mono=True)
+    return f'Encoded mono DSP: {result} ({self.backend.fast_codec_status()})'
+
+
+def _gui_convert_audio_to_mode6_fsb(self):
+    source = Path(self.convert_fsb_source.get().strip())
+    out = Path(self.convert_fsb_out.get().strip() or source.with_suffix('.fsb'))
+    self.convert_fsb_out.set(str(out))
+    name = self.convert_fsb_name.get().strip() or _safe_fsb_name_from_path(source)
+    self.convert_fsb_name.set(name)
+    tpl_text = self.convert_fsb_template.get().strip()
+    tpl = Path(tpl_text) if tpl_text else None
+    result, note = self.backend.build_mode6_fsb_from_audio_source(
+        source,
+        out,
+        template_fsb=tpl,
+        embedded_name=name,
+        force_mono=bool(self.convert_force_mono_var.get()),
+    )
+    return f'Built GCADPCM FSB: {result} ({note})'
+
+
+def _gui_convert_audio_to_mode2_fsb(self):
+    source = Path(self.convert_fsb_source.get().strip())
+    out = Path(self.convert_fsb_out.get().strip() or source.with_suffix('.mode2.fsb'))
+    self.convert_fsb_out.set(str(out))
+    name = self.convert_fsb_name.get().strip() or _safe_fsb_name_from_path(source)
+    self.convert_fsb_name.set(name)
+    result, note = self.backend.build_mode2_fsb_from_audio_source(source, out, embedded_name=name)
+    return f'Built Mode 2 PCM16 FSB: {result} ({note}; embedded name="{name}")'
+
+
+def _gui_autofill_wrap_name_fast(self):
+    source_text = self.wrap_dsp.get().strip() if hasattr(self, 'wrap_dsp') else ''
+    tpl_text = self.template_fsb.get().strip() if hasattr(self, 'template_fsb') else ''
+    if source_text:
+        src = Path(source_text)
+        name = _safe_fsb_name_from_path(src)
+        self.wrap_embed_name.set(name)
+        self.wrap_out.set(str(src.with_suffix('.fsb')))
+    elif tpl_text:
+        tpl = Path(tpl_text)
+        self.wrap_out.set(str(tpl.with_name(f'{tpl.stem}_wrapped.fsb')))
+    else:
+        self.wrap_out.set(str(resource_path('wrapped_output.fsb')))
+
+
+def _gui_wrap_source_into_fsb_auto(self):
+    source = Path(self.wrap_dsp.get().strip())
+    out = Path(self.wrap_out.get())
+    if not str(out).strip():
+        self._autofill_wrap_name()
+        out = Path(self.wrap_out.get())
+    name = self.wrap_embed_name.get().strip() or _safe_fsb_name_from_path(source)
+    self.wrap_embed_name.set(name)
+    use_template = bool(self.wrap_use_template_var.get()) if hasattr(self, 'wrap_use_template_var') else True
+    tpl_text = self.template_fsb.get().strip() if use_template else ''
+    tpl = Path(tpl_text) if tpl_text else None
+    result, note = self.backend.wrap_source_into_fsb(
+        source,
+        out,
+        template_fsb=tpl,
+        embedded_name=name,
+        force_mono=bool(self.wrap_force_mono_var.get()) if hasattr(self, 'wrap_force_mono_var') else False,
+    )
+    return f'Built FSB: {result} ({note})'
+
+
+def _gui_wrap_dsp_into_fsb_any(self):
+    return self._wrap_source_into_fsb_auto()
+
+
+def _gui_wrap_wav_into_fsb_auto_any(self):
+    return self._wrap_source_into_fsb_auto()
+
+
+_old_encode_pcm_channel_to_dsp_for_fast = CAToolBackend._encode_pcm_channel_to_dsp
+_old_decode_dsp_channel_bytes_for_fast = CAToolBackend._decode_dsp_channel_bytes
+_old_build_mode2_fsb_from_wav_for_audio_source = CAToolBackend.build_mode2_fsb_from_wav
+
+CAToolBackend.fast_codec_status = _backend_fast_codec_status
+CAToolBackend.set_fsb_embedded_name_bytes = _backend_set_fsb_embedded_name_bytes
+CAToolBackend.set_fsb_embedded_name = _backend_set_fsb_embedded_name
+CAToolBackend.prepare_audio_source_wav = _backend_prepare_audio_source_wav
+CAToolBackend._encode_pcm_channel_to_dsp = _backend_encode_pcm_channel_to_dsp_fast
+CAToolBackend._decode_dsp_channel_bytes = _backend_decode_dsp_channel_bytes_fast
+CAToolBackend.encode_audio_to_dsp = _backend_encode_audio_to_dsp
+CAToolBackend.encode_wav_to_dsp = _backend_encode_wav_to_dsp_any
+CAToolBackend.encode_wav_to_mono_dsp = _backend_encode_wav_to_mono_dsp_any
+CAToolBackend.build_mode6_fsb_from_dsp = _backend_build_mode6_fsb_from_dsp
+CAToolBackend.build_mode6_fsb_from_audio_source = _backend_build_mode6_fsb_from_audio_source
+CAToolBackend.build_mode2_fsb_from_audio_source = _backend_build_mode2_fsb_from_audio_source
+CAToolBackend.wrap_wav_into_fsb_auto = _backend_wrap_wav_into_fsb_auto_any
+CAToolBackend.wrap_source_into_fsb = _backend_wrap_source_into_fsb
+CAToolBackend.build_replacement_fsb_from_source = _backend_build_replacement_fsb_from_source_any
+
+CAToolGUI._build_convert_tab = _gui_build_convert_tab_fast
+CAToolGUI._build_wrap_tab = _gui_build_wrap_tab_fast
+CAToolGUI._decode_to_wav = _gui_decode_to_wav_any
+CAToolGUI._encode_to_dsp = _gui_encode_to_dsp_any
+CAToolGUI._encode_to_mono_dsp = _gui_encode_to_mono_dsp_any
+CAToolGUI._convert_audio_to_mode6_fsb = _gui_convert_audio_to_mode6_fsb
+CAToolGUI._convert_audio_to_mode2_fsb = _gui_convert_audio_to_mode2_fsb
+CAToolGUI._convert_wav_to_mode6_fsb = _gui_convert_audio_to_mode6_fsb
+CAToolGUI._convert_wav_to_mode2_fsb = _gui_convert_audio_to_mode2_fsb
+CAToolGUI._autofill_wrap_name = _gui_autofill_wrap_name_fast
+CAToolGUI._wrap_source_into_fsb_auto = _gui_wrap_source_into_fsb_auto
+CAToolGUI._wrap_dsp_into_fsb = _gui_wrap_dsp_into_fsb_any
+CAToolGUI._wrap_wav_into_fsb_auto = _gui_wrap_wav_into_fsb_auto_any
+
 def _maybe_prompt_install_soundfile_for_script_run():
     if soundFileImportError is None:
         return
@@ -3010,6 +3476,365 @@ def _maybe_prompt_install_soundfile_for_script_run():
             root.destroy()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Mode 6 stereo GCADPCM layout fix
+# ---------------------------------------------------------------------------
+# FSB5 GCADPCM stereo is not the same byte layout as a normal two-header DSP
+# file.  Standard DSP payloads are usually frame interleaved as LLLLLLLL RRRRRRRR
+# per 14-sample frame, while FSB5 Mode 6 normally uses a 2-byte subinterleave
+# layout unless the FSB header flags request non-interleaved/planar data.
+# Writing plain DSP frame interleave into an FSB5 stream makes stereo sound like
+# aggressive static.  These monkey-patches preserve the fast .pyd codec while
+# fixing how stereo ADPCM bytes are packed into / unpacked from FSB5.
+
+_FSB5_RATE_CODES = {
+    4000: 0,
+    8000: 1,
+    11000: 2,
+    11025: 3,
+    16000: 4,
+    22050: 5,
+    24000: 6,
+    32000: 7,
+    44100: 8,
+    48000: 9,
+    96000: 10,
+}
+
+
+def _fsb5_channel_code(channels: int) -> int:
+    return {1: 0, 2: 1, 6: 2, 8: 3}.get(int(channels), 0)
+
+
+def _fsb5_rate_code(sample_rate: int) -> int:
+    return _FSB5_RATE_CODES.get(int(sample_rate), 0)
+
+
+def _fsb5_pack_sample_mode(base_mode: int, sample_count: int, channels: int, sample_rate: int, has_extra_flags: bool = True) -> int:
+    mode = int(base_mode)
+    # Clear samples (bits 34..63), data offset (bits 8..32), channels (5..6), rate (1..4), and extra flag bit.
+    mode &= ~(((1 << 30) - 1) << 34)
+    mode &= ~(((1 << 25) - 1) << 8)
+    mode &= ~(0x3 << 5)
+    mode &= ~(0xF << 1)
+    mode &= ~0x1
+    mode |= (int(sample_count) & 0x3FFFFFFF) << 34
+    mode |= (_fsb5_channel_code(channels) & 0x3) << 5
+    mode |= (_fsb5_rate_code(sample_rate) & 0xF) << 1
+    if has_extra_flags:
+        mode |= 0x1
+    return mode
+
+
+def _fsb5_layout_from_meta(meta: dict) -> str:
+    channels = int(meta.get('channels', 1) or 1)
+    if channels <= 1:
+        return 'mono'
+    # In vgmstream's FSB5 parser, Mode 6 + flags bit 0x02 means normal DSP with
+    # non-interleaved channel blocks. Without that flag, Mode 6 is DSP subinterleave.
+    if int(meta.get('version', 0) or 0) == 1 and (int(meta.get('flags', 0) or 0) & 0x02):
+        return 'planar'
+    return 'subinterleave2'
+
+
+def _split_dsp_payload_channels(payload: bytes, channels: int, sample_count: int, block_size: int = 8):
+    channels = int(channels)
+    if channels <= 1:
+        return [bytes(payload)]
+    frame_count = (int(sample_count) + 13) // 14
+    per_channel_size = frame_count * 8
+    payload = bytes(payload)
+    if len(payload) < per_channel_size * channels:
+        raise ToolError(
+            f'DSP payload is too small for {channels} channel(s): '
+            f'need {per_channel_size * channels} bytes, found {len(payload)}.'
+        )
+    payload = payload[:per_channel_size * channels]
+
+    # Most two-header DSPs from this tool use block_size=8: L frame, R frame, ...
+    # If block_size is >= one full channel, treat it as planar/flat.
+    block_size = int(block_size or 0)
+    if block_size <= 0 or block_size >= per_channel_size:
+        return [payload[ch * per_channel_size:(ch + 1) * per_channel_size] for ch in range(channels)]
+
+    outs = [bytearray() for _ in range(channels)]
+    pos = 0
+    while pos < len(payload):
+        for ch in range(channels):
+            outs[ch].extend(payload[pos:pos + block_size])
+            pos += block_size
+            if pos >= len(payload):
+                break
+    return [bytes(out[:per_channel_size]) for out in outs]
+
+
+def _join_fsb_gcadpcm_channels(channel_payloads, layout: str) -> bytes:
+    channels = len(channel_payloads)
+    if channels <= 1:
+        return bytes(channel_payloads[0])
+    per_channel_size = min(len(p) for p in channel_payloads)
+    per_channel_size -= per_channel_size % 8
+    channel_payloads = [bytes(p[:per_channel_size]) for p in channel_payloads]
+
+    if layout == 'planar':
+        return b''.join(channel_payloads)
+
+    if layout == 'frame_interleave8':
+        out = bytearray()
+        for pos in range(0, per_channel_size, 8):
+            for ch in range(channels):
+                out.extend(channel_payloads[ch][pos:pos + 8])
+        return bytes(out)
+
+    # FSB5 Mode 6 default: 2-byte subinterleave within each 8-byte DSP frame.
+    # For stereo this becomes L[0:2] R[0:2] L[2:4] R[2:4] ... per frame.
+    out = bytearray()
+    for frame_pos in range(0, per_channel_size, 8):
+        for sub in range(0, 8, 2):
+            for ch in range(channels):
+                out.extend(channel_payloads[ch][frame_pos + sub:frame_pos + sub + 2])
+    return bytes(out)
+
+
+def _split_fsb_gcadpcm_channels(payload: bytes, channels: int, sample_count: int, layout: str):
+    channels = int(channels)
+    if channels <= 1:
+        return [bytes(payload)]
+    frame_count = (int(sample_count) + 13) // 14
+    per_channel_size = frame_count * 8
+    total_size = per_channel_size * channels
+    payload = bytes(payload[:total_size])
+    if len(payload) < total_size:
+        raise ToolError(
+            f'FSB GCADPCM payload is too small for {channels} channel(s): '
+            f'need {total_size} bytes, found {len(payload)}.'
+        )
+
+    if layout == 'planar':
+        return [payload[ch * per_channel_size:(ch + 1) * per_channel_size] for ch in range(channels)]
+
+    if layout == 'frame_interleave8':
+        outs = [bytearray() for _ in range(channels)]
+        pos = 0
+        while pos < total_size:
+            for ch in range(channels):
+                outs[ch].extend(payload[pos:pos + 8])
+                pos += 8
+        return [bytes(out[:per_channel_size]) for out in outs]
+
+    outs = [bytearray() for _ in range(channels)]
+    pos = 0
+    for _frame in range(frame_count):
+        for _sub in range(0, 8, 2):
+            for ch in range(channels):
+                outs[ch].extend(payload[pos:pos + 2])
+                pos += 2
+    return [bytes(out[:per_channel_size]) for out in outs]
+
+
+def _dsp_file_payload_to_fsb_payload(self, dsp: DspHeader, dsp_payload: bytes, layout: str) -> bytes:
+    channel_payloads = _split_dsp_payload_channels(
+        dsp_payload,
+        int(dsp.channels),
+        int(dsp.sample_count),
+        int(dsp.block_size or 8),
+    )
+    return _join_fsb_gcadpcm_channels(channel_payloads, layout)
+
+
+_old_parse_fsb_header_for_mode6_layout = CAToolBackend._parse_fsb_header
+
+
+def _backend_parse_fsb_header_mode6_layout(self, blob: bytes):
+    meta = _old_parse_fsb_header_for_mode6_layout(self, blob)
+    version = int(meta.get('version', 0) or 0)
+    if version == 1 and len(blob) >= 0x24:
+        meta['flags'] = struct.unpack_from('<I', blob, 0x20)[0]
+    else:
+        # v0 has flag-looking fields, but the common FSB5 parser treats Mode 6 as
+        # subinterleaved unless version 1 flag 0x02 is explicitly present.
+        meta['flags'] = 0
+    meta['gcadpcm_layout'] = _fsb5_layout_from_meta(meta)
+    return meta
+
+
+def _backend_wrap_dsp_into_fsb_mode6_layout(self, template_fsb: Path, dsp_path: Path, out_path: Path):
+    self.ensure_exists(template_fsb)
+    self.ensure_exists(dsp_path)
+    dsp = self.read_dsp_header(dsp_path)
+    if dsp.fmt != 0:
+        raise ToolError(f'Unsupported DSP format value: {dsp.fmt}. Expected 0.')
+
+    blob = bytearray(Path(template_fsb).read_bytes())
+    meta = self._parse_fsb_header(blob)
+    if meta['mode'] != 6:
+        raise ToolError('Template FSB is not GCADPCM (mode 6).')
+
+    sample_header = meta['sample_header']
+    dsp_bytes = Path(dsp_path).read_bytes()
+    raw_dsp_payload = dsp_bytes[dsp.data_offset:]
+    if not raw_dsp_payload:
+        raise ToolError(f'DSP contains no ADPCM payload after the {dsp.data_offset:#x}-byte header area.')
+
+    found_channels = False
+    found_freq = False
+    found_loop = False
+    found_dspcoeff = False
+
+    sample_mode = struct.unpack_from('<Q', sample_header, 0)[0]
+    sample_mode = _fsb5_pack_sample_mode(sample_mode, dsp.sample_count, dsp.channels, dsp.sample_rate, has_extra_flags=True)
+    struct.pack_into('<Q', sample_header, 0, sample_mode)
+
+    for chunk in self._iter_sample_chunks(sample_header):
+        ctype = chunk['type']
+        cstart = chunk['data_offset']
+        cend = chunk['data_end']
+        csize = chunk['size']
+        if ctype == 1 and csize >= 1:
+            sample_header[cstart] = int(dsp.channels) & 0xFF
+            found_channels = True
+        elif ctype == 2 and csize == 4:
+            struct.pack_into('<I', sample_header, cstart, int(dsp.sample_rate))
+            found_freq = True
+        elif ctype == 3 and csize == 8:
+            loop_start_samples = max(0, (int(dsp.loop_start) - 2) // 8 * 14)
+            loop_end_samples = max(0, ((int(dsp.loop_end) - 2) // 8 * 14) + 1)
+            struct.pack_into('<II', sample_header, cstart, loop_start_samples, loop_end_samples)
+            found_loop = True
+        elif ctype == 7:
+            if csize != len(dsp.coeff_blob):
+                hint = ''
+                if csize == 46 and len(dsp.coeff_blob) == 92:
+                    hint = ' The template is mono (1ch) and the DSP is stereo (2ch). Use a stereo template FSB or re-encode the source as mono DSP.'
+                elif csize == 92 and len(dsp.coeff_blob) == 46:
+                    hint = ' The template is stereo (2ch) and the DSP is mono (1ch). Use a mono template FSB or a stereo DSP.'
+                raise ToolError(
+                    f'Template DSP coefficient chunk is {csize} bytes, but DSP header block is {len(dsp.coeff_blob)} bytes. '
+                    f'This usually means the template is {meta["channels"]}ch and the DSP is {dsp.channels}ch, or the template uses a different DSP extra-data layout.' + hint
+                )
+            sample_header[cstart:cend] = dsp.coeff_blob
+            found_dspcoeff = True
+
+    if not found_channels and int(meta['channels']) != int(dsp.channels):
+        raise ToolError(
+            f'Template FSB is {meta["channels"]} channel(s), but DSP is {dsp.channels} channel(s). '
+            'Use a template with the same channel count as the DSP input.'
+        )
+    if not found_dspcoeff:
+        raise ToolError('Template FSB does not contain a DSPCOEFF chunk, so it cannot be safely used as a GCADPCM wrapper template.')
+    if not found_freq:
+        raise ToolError('Template FSB does not contain a FREQUENCY chunk.')
+    if dsp.loop_flag and not found_loop:
+        raise ToolError('DSP is looped, but template FSB does not contain a LOOP chunk.')
+
+    layout = _fsb5_layout_from_meta(meta)
+    fsb_payload = _dsp_file_payload_to_fsb_payload(self, dsp, raw_dsp_payload, layout)
+
+    blob[meta['sample_header_off']:meta['sample_header_off'] + meta['sample_header_size']] = sample_header
+    struct.pack_into('<I', blob, 0x14, len(fsb_payload))
+    rebuilt = bytes(blob[:meta['data_off']]) + fsb_payload
+    Path(out_path).write_bytes(rebuilt)
+    return Path(out_path)
+
+
+def _backend_build_mode6_fsb_from_dsp_mode6_layout(self, dsp_path: Path, out_path: Path, embedded_name: str = ''):
+    self.ensure_exists(dsp_path)
+    dsp = self.read_dsp_header(dsp_path)
+    dsp_bytes = Path(dsp_path).read_bytes()
+    raw_dsp_payload = dsp_bytes[dsp.data_offset:]
+    if not raw_dsp_payload:
+        raise ToolError('DSP contains no ADPCM payload.')
+
+    # Build a normal FSB5 v0 Mode 6 stream using FMOD's default GCADPCM
+    # subinterleave layout. This avoids the old stereo-static issue while keeping
+    # the header simple/compatible with the existing parser.
+    meta_like = {'version': 0, 'flags': 0, 'channels': int(dsp.channels)}
+    layout = _fsb5_layout_from_meta(meta_like)
+    payload = _dsp_file_payload_to_fsb_payload(self, dsp, raw_dsp_payload, layout)
+
+    sample_mode = _fsb5_pack_sample_mode(0, dsp.sample_count, dsp.channels, dsp.sample_rate, has_extra_flags=True)
+    chunks = []
+    chunks.append((1, bytes([int(dsp.channels) & 0xFF])))
+    chunks.append((2, struct.pack('<I', int(dsp.sample_rate))))
+    if dsp.loop_flag:
+        loop_start_samples = max(0, (int(dsp.loop_start) - 2) // 8 * 14)
+        loop_end_samples = max(0, ((int(dsp.loop_end) - 2) // 8 * 14) + 1)
+        chunks.append((3, struct.pack('<II', loop_start_samples, loop_end_samples)))
+    chunks.append((7, bytes(dsp.coeff_blob)))
+
+    sample_header = bytearray(struct.pack('<Q', sample_mode))
+    for i, (chunk_type, chunk_data) in enumerate(chunks):
+        next_flag = 1 if i < len(chunks) - 1 else 0
+        sample_header += _ca_chunk_header(chunk_type, len(chunk_data), next_flag) + chunk_data
+
+    name = (embedded_name or _safe_fsb_name_from_path(dsp_path)).strip()
+    name_table = name.encode('ascii', errors='ignore')[:255] + b'\x00' if name else b''
+    header_size = 64
+    header = bytearray(header_size)
+    header[:4] = b'FSB5'
+    struct.pack_into('<IIIIII', header, 4, 0, 1, len(sample_header), len(name_table), len(payload), 6)
+    out = bytes(header) + bytes(sample_header) + name_table + payload
+    Path(out_path).write_bytes(out)
+    return Path(out_path)
+
+
+def _backend_extract_fsb_decode_info_mode6_layout(self, fsb_bytes: bytes):
+    info = self._extract_fsb_sample_metadata(fsb_bytes)
+    if info['mode'] != 6:
+        raise ToolError(f'Only GCADPCM FSB files are supported by this decoder path. Found mode {info["mode"]}.')
+    coeff_blob = None
+    meta = info['meta']
+    for chunk in self._iter_sample_chunks(meta['sample_header']):
+        ctype = chunk['type']
+        cstart = chunk['data_offset']
+        cend = chunk['data_end']
+        if ctype == 7:
+            coeff_blob = bytes(meta['sample_header'][cstart:cend])
+    if coeff_blob is None:
+        raise ToolError('FSB DSPCOEFF chunk is missing.')
+    return {
+        'sample_count': info['sample_count'],
+        'sample_rate': info['sample_rate'],
+        'channels': info['channels'],
+        'coeff_blob': coeff_blob,
+        'payload': info['payload'],
+        'meta': meta,
+        'layout': _fsb5_layout_from_meta(meta),
+    }
+
+
+def _backend_decode_fsb_bytes_to_wav_bytes_mode6_layout(self, fsb_bytes: bytes) -> bytes:
+    if not fsb_bytes or fsb_bytes[:4] != b'FSB5':
+        raise ToolError('Selected CombinedAudio entry is not a valid FSB5 segment.')
+    meta = self._parse_fsb_header(fsb_bytes)
+    if meta['mode'] in (1, 2, 16):
+        return self._decode_pcm_fsb_to_wav_bytes(fsb_bytes)
+    info = self._extract_fsb_decode_info(fsb_bytes)
+    sample_count = int(info['sample_count'])
+    sample_rate = int(info['sample_rate'])
+    channels = int(info['channels'])
+    payload = bytes(info['payload'])
+    pairs_by_channel = self._coeff_blob_to_pairs(info['coeff_blob'], channels)
+    if channels == 1:
+        pcm = self._decode_dsp_channel_bytes(payload[:((sample_count + 13) // 14) * 8], sample_count, pairs_by_channel[0])
+        return self._wav_bytes_from_pcm16(pcm, sample_rate)
+    if channels != 2:
+        raise ToolError(f'Only mono and stereo GCADPCM FSB files are supported right now. Found {channels} channels.')
+
+    channel_payloads = _split_fsb_gcadpcm_channels(payload, channels, sample_count, info.get('layout', _fsb5_layout_from_meta(meta)))
+    left_pcm = self._decode_dsp_channel_bytes(channel_payloads[0], sample_count, pairs_by_channel[0])
+    right_pcm = self._decode_dsp_channel_bytes(channel_payloads[1], sample_count, pairs_by_channel[1])
+    stereo = np.column_stack((left_pcm, right_pcm))
+    return self._wav_bytes_from_pcm16(stereo, sample_rate)
+
+
+CAToolBackend._parse_fsb_header = _backend_parse_fsb_header_mode6_layout
+CAToolBackend.wrap_dsp_into_fsb = _backend_wrap_dsp_into_fsb_mode6_layout
+CAToolBackend.build_mode6_fsb_from_dsp = _backend_build_mode6_fsb_from_dsp_mode6_layout
+CAToolBackend._extract_fsb_decode_info = _backend_extract_fsb_decode_info_mode6_layout
+CAToolBackend.decode_fsb_bytes_to_wav_bytes = _backend_decode_fsb_bytes_to_wav_bytes_mode6_layout
 
 def main():
     app = CAToolGUI()

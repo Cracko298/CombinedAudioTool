@@ -17,5 +17,5 @@
 ## Building:
 - We package it using PyInstaller.
 ```
-py -m PyInstaller --onefile --windowed --icon=icon.ico --add-data "icon.ico;." ".\CATool.py"
+py -3.14 -m PyInstaller --onefile --windowed --name CATool --icon icon.ico --add-binary "catool_fast.cp314-win_amd64.pyd;." --add-data "icon.ico;." CATool.py
 ```

@@ -7,7 +7,7 @@
 - Extract All FSB SoundBank Files from `CombinedAudio.bin`.
 - Play, Pause, Seek, Restart, Search through Audio Tracks.
 - Gain information about metadata, the Archive itself, and more.
-- Convert between formats, including `*.wav`, `*.dsp`, `*.fsb`.
+- Convert between formats, including `*.wav`, `*.dsp`, `*.fsb`, and many more.
 - Convert Songs, Add SFX, and Extract Segments/Header information.
 
 ## Download(s):

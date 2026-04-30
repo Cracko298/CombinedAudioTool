@@ -11,7 +11,7 @@
 - Convert Songs, Add SFX, and Extract Segments/Header information.
 
 ## Download(s):
-- Download a Compiled Executable [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v2.7.1/CATool.exe).
+- Download a Packaged Executable [Here](https://github.com/Minecraft-3DS-Community/CombinedAudioTool/releases/download/v2.7.1/CATool.exe).
 - Requires `Python 3.12` (or) `Python 3.14` for the Script.
   - You can use `Python 3.10/3.11/3.13`, however it will be insanely slow at encoding.
   - `Python STD` (Installed alongside Python).
